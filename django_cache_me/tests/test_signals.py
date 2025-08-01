@@ -1,19 +1,19 @@
-"""
-Test signals functionality for django-cache-me
-"""
-from django.test import TestCase, override_settings
+"""Test signals functionality for django-cache-me."""
+
+from unittest.mock import MagicMock, patch
+
 from django.core.cache import cache
 from django.db import models
-from unittest.mock import patch, MagicMock
+from django.test import TestCase, override_settings
 
+from django_cache_me.model_mixin import CacheMeInvalidationMixin
+from django_cache_me.registry import CacheMeOptions, cache_me_registry
 from django_cache_me.signals import (
-    invalidate_model_cache,
     auto_invalidate_cache,
     enable_auto_invalidation,
+    invalidate_model_cache,
     setup_cache_invalidation,
-    CacheInvalidationMixin
 )
-from django_cache_me.registry import CacheMeOptions, cache_me_registry
 
 
 # Simple test model for testing
@@ -23,7 +23,7 @@ class TestModel(models.Model):
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        app_label = 'django_cache_me'
+        app_label = "django_cache_me"
         abstract = True
 
 
@@ -36,6 +36,7 @@ class TestCacheInvalidationSignals(TestCase):
 
     def test_invalidate_model_cache_registered_model(self):
         """Test cache invalidation for registered model."""
+
         # Register the model
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
@@ -70,6 +71,7 @@ class TestCacheInvalidationSignals(TestCase):
 
     def test_invalidate_model_cache_with_permanent_flag(self):
         """Test cache invalidation with permanent flag."""
+
         # Register the model
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
@@ -88,6 +90,7 @@ class TestCacheInvalidationSignals(TestCase):
 
     def test_auto_invalidate_cache_signal_handler(self):
         """Test auto invalidate cache signal handler."""
+
         # Register the model
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
@@ -116,6 +119,7 @@ class TestCacheInvalidationSignals(TestCase):
 
     def test_setup_cache_invalidation(self):
         """Test setting up cache invalidation for all registered models."""
+
         # Register the model
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
@@ -135,6 +139,7 @@ class TestCacheInvalidationSignals(TestCase):
     @override_settings(DJANGO_CACHE_ME_DEBUG_MODE=True)
     def test_cache_invalidation_with_debug_mode(self):
         """Test cache invalidation with debug mode enabled."""
+
         # Register the model
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
@@ -154,12 +159,13 @@ class TestCacheInvalidationSignals(TestCase):
     def test_cache_invalidation_mixin_functionality(self):
         """Test CacheInvalidationMixin functionality."""
         # Test that the mixin exists and can be used
-        self.assertTrue(hasattr(CacheInvalidationMixin, 'save'))
-        self.assertTrue(hasattr(CacheInvalidationMixin, 'delete'))
+        self.assertTrue(hasattr(CacheMeInvalidationMixin, "save"))
+        self.assertTrue(hasattr(CacheMeInvalidationMixin, "delete"))
 
-    @patch('django_cache_me.signals.cache')
+    @patch("django_cache_me.signals.cache")
     def test_cache_deletion_patterns(self, mock_cache):
         """Test cache deletion patterns."""
+
         # Register the model
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
@@ -173,11 +179,13 @@ class TestCacheInvalidationSignals(TestCase):
         # Mock cache methods
         mock_cache.delete = MagicMock()
         mock_cache.delete_pattern = MagicMock()
-        mock_cache.keys = MagicMock(return_value=[
-            f'cache_me:queryset:{TestModel._meta.app_label}.{TestModel._meta.model_name}:key1',
-            f'cache_me:permanent:{TestModel._meta.app_label}.{TestModel._meta.model_name}:key2',
-            'other_cache_key'
-        ])
+        mock_cache.keys = MagicMock(
+            return_value=[
+                f"cache_me:queryset:{TestModel._meta.app_label}.{TestModel._meta.model_name}:key1",
+                f"cache_me:permanent:{TestModel._meta.app_label}.{TestModel._meta.model_name}:key2",
+                "other_cache_key",
+            ]
+        )
 
         invalidate_model_cache(TestModel)
 
@@ -199,6 +207,7 @@ class TestCacheInvalidationSignals(TestCase):
 
     def test_invalidate_model_cache_registry_interaction(self):
         """Test invalidate_model_cache interaction with registry."""
+
         # Register the model
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):

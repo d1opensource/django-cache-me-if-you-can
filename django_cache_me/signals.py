@@ -1,26 +1,7 @@
-from django.db import models
-from django.db.models.signals import post_save, post_delete, post_migrate
-from django.dispatch import receiver
 from django.core.cache import cache
+from django.db.models.signals import post_delete, post_save
+
 from .settings import cache_invalidation_log
-
-
-class CacheInvalidationMixin:
-    """
-    Mixin to automatically invalidate cache when model instances are saved or deleted.
-    """
-
-    def save(self, *args, **kwargs):
-        result = super().save(*args, **kwargs)
-        # Invalidate cache for this model after saving
-        invalidate_model_cache(self.__class__)
-        return result
-
-    def delete(self, *args, **kwargs):
-        result = super().delete(*args, **kwargs)
-        # Invalidate cache for this model after deleting
-        invalidate_model_cache(self.__class__)
-        return result
 
 
 def invalidate_model_cache(model_class, invalidate_permanent=False):
@@ -30,6 +11,7 @@ def invalidate_model_cache(model_class, invalidate_permanent=False):
     Args:
         model_class: The model class to invalidate cache for
         invalidate_permanent (bool): If True, also invalidates permanent cache
+
     """
     from .registry import cache_me_registry
 
@@ -54,7 +36,7 @@ def invalidate_model_cache(model_class, invalidate_permanent=False):
     # For queryset caches, we need a way to track and invalidate them
     try:
         # Try to delete pattern-based keys if using Redis with django-redis
-        if hasattr(cache, 'delete_pattern'):
+        if hasattr(cache, "delete_pattern"):
             # Delete regular queryset cache
             cache.delete_pattern(f"cache_me:queryset:{model_name}:*")
 
@@ -71,9 +53,7 @@ def invalidate_model_cache(model_class, invalidate_permanent=False):
 
 
 def auto_invalidate_cache(sender, **kwargs):
-    """
-    Signal handler to automatically invalidate cache when models are saved/deleted.
-    """
+    """Signal handler to automatically invalidate cache when models are saved/deleted."""
     invalidate_model_cache(sender)
 
 

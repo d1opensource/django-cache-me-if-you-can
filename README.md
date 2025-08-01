@@ -4,14 +4,14 @@ A powerful Django library for intelligent queryset caching with automatic invali
 
 ## Features
 
-✨ **Smart Queryset Caching** - Automatically cache Django querysets based on SQL queries  
-🔄 **Automatic Cache Invalidation** - Clear cache when models are saved, updated, or deleted  
-🏛️ **Permanent Cache** - Cache that persists through model changes until timeout  
-🎯 **Granular Control** - Configure caching per model with flexible options  
-🐛 **Debug Mode** - Comprehensive logging for cache hits, misses, and invalidations  
-🚀 **Zero Configuration** - Works out of the box with sensible defaults  
-🔧 **Multiple Cache Backends** - Supports Redis, Memcached, and database cache  
-📈 **Performance Focused** - Minimal overhead with maximum speed gains  
+✨ **Smart Queryset Caching** - Automatically cache Django querysets based on SQL queries
+🔄 **Automatic Cache Invalidation** - Clear cache when models are saved, updated, or deleted
+🏛️ **Permanent Cache** - Cache that persists through model changes until timeout
+🎯 **Granular Control** - Configure caching per model with flexible options
+🐛 **Debug Mode** - Comprehensive logging for cache hits, misses, and invalidations
+🚀 **Zero Configuration** - Works out of the box with sensible defaults
+🔧 **Multiple Cache Backends** - Supports Redis, Memcached, and database cache
+📈 **Performance Focused** - Minimal overhead with maximum speed gains
 
 ## Quick Start
 
@@ -141,10 +141,10 @@ DJANGO_CACHE_ME_TIMEOUT = 600
 class MyModelCacheMeOptions(CacheMeOptions):
     # Cache entire table when .all() is called (default: False)
     cache_table = True
-    
-    # Cache querysets with filters/annotations (default: False)  
+
+    # Cache querysets with filters/annotations (default: False)
     cache_queryset = True
-    
+
     # Custom timeout for this model (default: uses DJANGO_CACHE_ME_TIMEOUT)
     timeout = 1800  # 30 minutes
 ```
@@ -169,7 +169,7 @@ Cache is automatically cleared when:
 Product.save()                    # Clears Product cache
 Product.delete()                  # Clears Product cache
 
-# Bulk operations  
+# Bulk operations
 Product.objects.bulk_create([...])           # Clears Product cache
 Product.objects.bulk_update([...], ['name']) # Clears Product cache
 Product.objects.filter(...).update(...)      # Clears Product cache
@@ -237,7 +237,7 @@ The library generates cache keys based on:
 Key patterns:
 ```
 cache_me:table:myapp.user                           # Table cache
-cache_me:queryset:myapp.table:md5hash                # Queryset cache  
+cache_me:queryset:myapp.table:md5hash                # Queryset cache
 cache_me:permanent_table:myapp.table                 # Permanent table cache
 cache_me:permanent_queryset:myapp.table:md5hash      # Permanent queryset cache
 ```
@@ -247,9 +247,10 @@ cache_me:permanent_queryset:myapp.table:md5hash      # Permanent queryset cache
 For models that need custom invalidation logic:
 
 ```python
-from django_cache_me.signals import CacheInvalidationMixin
+from django_cache_me.signals import CacheMeInvalidationMixin
 
-class Product(models.Model, CacheInvalidationMixin):
+
+class Product(models.Model, CacheMeInvalidationMixin):
     name = models.CharField(max_length=100)
     # Cache automatically invalidated on save/delete
 ```
