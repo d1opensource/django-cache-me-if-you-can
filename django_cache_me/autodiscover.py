@@ -1,6 +1,6 @@
 import importlib
+
 from django.apps import apps
-from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
 
@@ -14,15 +14,15 @@ def autodiscover():
 
         # Try to import cache_me module from each app
         try:
-            importlib.import_module(f'{app_name}.cache_me')
+            importlib.import_module(f"{app_name}.cache_me")
         except ImportError:
             # No cache_me.py file in this app, that's fine
             pass
         except Exception as e:
             # Other errors should be reported
-            raise ImproperlyConfigured(
-                f"Error importing cache_me module from {app_name}: {e}"
-            )
+            msg = f"Error importing cache_me module from {app_name}: {e}"
+            raise ImproperlyConfigured(msg) from e
+
 
 #
 # def get_cache_backend():
