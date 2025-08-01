@@ -28,10 +28,39 @@ def invalidate_model_cache(model_class, invalidate_permanent=False):
     table_cache_key = f"cache_me:table:{model_name}"
     cache.delete(table_cache_key)
 
+    # Invalidate simple query cache
+    simple_cache_key = f"cache_me:queryset:{model_name}:simple"
+    cache.delete(simple_cache_key)
+
     # Invalidate permanent cache if requested
     if invalidate_permanent:
-        permanent_table_cache_key = f"cache_me:permanent_table:{model_name}"
+        permanent_table_cache_key = f"cache_me:permanent:{model_name}"
         cache.delete(permanent_table_cache_key)
+
+        permanent_simple_cache_key = f"cache_me:permanent:{model_name}:simple"
+        cache.delete(permanent_simple_cache_key)
+
+    # Get tracked cache keys and invalidate them
+    tracking_key = f"cache_me:keys:{model_name}"
+    tracked_keys = cache.get(tracking_key, set())
+
+    if isinstance(tracked_keys, set) and tracked_keys:
+        # Delete all tracked cache keys
+        for cache_key in tracked_keys:
+            # Only delete regular cache keys unless invalidate_permanent is True
+            if invalidate_permanent or not cache_key.startswith("cache_me:permanent"):
+                cache.delete(cache_key)
+
+        # Clean up tracking key if invalidating all
+        if invalidate_permanent:
+            cache.delete(tracking_key)
+        else:
+            # Remove only non-permanent keys from tracking
+            remaining_keys = {key for key in tracked_keys if key.startswith("cache_me:permanent")}
+            if remaining_keys:
+                cache.set(tracking_key, remaining_keys, 86400)
+            else:
+                cache.delete(tracking_key)
 
     # For queryset caches, we need a way to track and invalidate them
     try:
@@ -42,7 +71,7 @@ def invalidate_model_cache(model_class, invalidate_permanent=False):
 
             # Delete permanent queryset cache if requested
             if invalidate_permanent:
-                cache.delete_pattern(f"cache_me:permanent_queryset:{model_name}:*")
+                cache.delete_pattern(f"cache_me:permanent:{model_name}:*")
         else:
             # Fallback: we could maintain a set of cache keys, but for now we'll clear all
             # In a real implementation, you might want to use cache versioning or key tracking
