@@ -1,0 +1,468 @@
+from typing import Dict, Type
+import hashlib
+from django.db import models
+from django.db.models.query import QuerySet
+from django.core.cache import cache
+from django.conf import settings
+from .settings import is_cache_enabled, cache_hit_log, cache_miss_log, cache_retrieval_log
+from .signals import invalidate_model_cache
+
+class CachedQuerySet(QuerySet):
+    """
+    Custom QuerySet that handles caching based on model options.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self._use_cache = True
+        self._is_permanent_cache = False
+        super().__init__(*args, **kwargs)
+
+    def _get_cache_options(self):
+        """Get caching options for this model."""
+        return cache_me_registry.get_options(self.model)
+
+    def _generate_cache_key(self, query_type='queryset', permanent=None):
+        """Generate cache key based on query."""
+        model_name = f"{self.model._meta.app_label}.{self.model._meta.model_name}"
+
+        # Check if this is a permanent cache queryset
+        if permanent is None:
+            permanent = getattr(self, '_is_permanent_cache', False)
+
+        if query_type == 'table':
+            # For .all() when cache_table=True
+            cache_type = 'permanent' if permanent else 'table'
+            return f"cache_me:{cache_type}:{model_name}"
+
+        # For complex querysets - hash the SQL query
+        query_str = str(self.query)
+        query_hash = hashlib.md5(query_str.encode('utf-8')).hexdigest()
+        cache_type = 'permanent' if permanent else 'queryset'
+        return f"cache_me:{cache_type}:{model_name}:{query_hash}"
+
+    def _get_timeout(self):
+        """Get cache timeout for this model."""
+        options = self._get_cache_options()
+        if options and options.timeout:
+            return options.timeout
+        return getattr(settings, 'DJANGO_CACHE_ME_TIMEOUT', 300)
+
+    def _should_cache_all(self):
+        """Check if .all() should be cached."""
+        options = self._get_cache_options()
+        return options and options.cache_table
+
+    def _should_cache_queryset(self):
+        """Check if queryset should be cached."""
+        options = self._get_cache_options()
+        return options and options.cache_queryset
+
+    def _is_all_query(self):
+        """Check if this is a simple .all() query."""
+        # Simple check: if no filters, excludes, or complex operations
+        # Use getattr with default False to handle different Django versions
+        return (not self.query.where and
+                not getattr(self.query, 'extra', None) and
+                not getattr(self.query, 'having', None) and
+                not getattr(self.query, 'order_by', None) and
+                not getattr(self.query, 'group_by', None))
+
+    def _cache_queryset(self):
+        """Cache the queryset results."""
+        # Check if caching is globally disabled
+        if not is_cache_enabled():
+            cache_miss_log("GLOBAL_DISABLED")
+            return list(super().iterator())
+
+        if not self._use_cache:
+            return list(super().iterator())
+
+        options = self._get_cache_options()
+        if not options:
+            return list(super().iterator())
+
+        is_all_query = self._is_all_query()
+
+        # Determine if we should cache this query
+        should_cache = False
+        cache_key = None
+
+        if is_all_query and self._should_cache_all():
+            # Cache .all() when cache_table=True
+            should_cache = True
+            cache_key = self._generate_cache_key('table')
+        elif not is_all_query and self._should_cache_queryset():
+            # Cache filtered queries when cache_queryset=True
+            should_cache = True
+            cache_key = self._generate_cache_key('queryset')
+        elif is_all_query and self._should_cache_queryset() and not self._should_cache_all():
+            # Cache .all() when cache_queryset=True but cache_table=False
+            should_cache = True
+            cache_key = self._generate_cache_key('queryset')
+
+        if not should_cache:
+            return list(super().iterator())
+
+        # Try to get from cache
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            cache_retrieval_log(cache_key)
+            return cached_result
+
+        # Cache miss - execute query and cache results
+        cache_miss_log(cache_key)
+        result = list(super().iterator())
+        timeout = self._get_timeout()
+        cache.set(cache_key, result, timeout)
+        cache_hit_log(cache_key, timeout)
+        return result
+
+    def iterator(self, chunk_size=2000):
+        """Override iterator to use caching."""
+        for obj in self._cache_queryset():
+            yield obj
+
+    def __iter__(self):
+        """Override iteration to use caching."""
+        return iter(self._cache_queryset())
+
+    def __len__(self):
+        """Override len to use cached results if available."""
+        return len(self._cache_queryset())
+
+    def __getitem__(self, k):
+        """Override getitem to work with cached results."""
+        return self._cache_queryset()[k]
+
+    def _clone(self):
+        """Override _clone to preserve the _use_cache and _is_permanent_cache settings."""
+        clone = super()._clone()
+        clone._use_cache = getattr(self, '_use_cache', True)
+        clone._is_permanent_cache = getattr(self, '_is_permanent_cache', False)
+        return clone
+
+    def no_cache(self):
+        """Return a copy of this queryset that won't use cache."""
+        qs = self._clone()
+        qs._use_cache = False
+        return qs
+
+    def permanent_cache(self):
+        """Return a copy of this queryset that uses permanent caching."""
+        qs = self._clone()
+        qs._is_permanent_cache = True
+        return qs
+
+    def update(self, **kwargs):
+        """Override update to invalidate cache after bulk updates."""
+        result = super().update(**kwargs)
+        # Invalidate cache after update
+        self._invalidate_cache()
+        return result
+
+    def delete(self):
+        """Override delete to invalidate cache after bulk deletes."""
+        result = super().delete()
+        # Invalidate cache after delete
+        self._invalidate_cache()
+        return result
+
+    def _invalidate_cache(self):
+        """Helper method to invalidate cache for this model."""
+        invalidate_model_cache(self.model)
+
+    def invalidate_cache(self, invalidate_all=False):
+        """
+        Invalidate cache for this model.
+
+        Args:
+            invalidate_all (bool): If True, also invalidates permanent cache.
+                                 If False, only invalidates regular cache.
+        """
+        invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
+
+
+class PermanentCachedQuerySet(CachedQuerySet):
+    """
+    QuerySet that uses permanent caching - cache is not invalidated on model saves/updates.
+    Only expires by timeout or explicit invalidation.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_permanent_cache = True
+
+    def _cache_queryset(self):
+        """Cache the queryset results with permanent cache keys."""
+        # Check if caching is globally disabled
+        if not is_cache_enabled():
+            cache_miss_log("GLOBAL_DISABLED")
+            return list(super(CachedQuerySet, self).iterator())
+
+        if not self._use_cache:
+            return list(super(CachedQuerySet, self).iterator())
+
+        options = self._get_cache_options()
+        if not options:
+            return list(super(CachedQuerySet, self).iterator())
+
+        is_all_query = self._is_all_query()
+
+        # Determine if we should cache this query (same logic but with permanent=True)
+        should_cache = False
+        cache_key = None
+
+        if is_all_query and self._should_cache_all():
+            # Cache .all() when cache_table=True
+            should_cache = True
+            cache_key = self._generate_cache_key('table', permanent=True)
+        elif not is_all_query and self._should_cache_queryset():
+            # Cache filtered queries when cache_queryset=True
+            should_cache = True
+            cache_key = self._generate_cache_key('queryset', permanent=True)
+        elif is_all_query and self._should_cache_queryset() and not self._should_cache_all():
+            # Cache .all() when cache_queryset=True but cache_table=False
+            should_cache = True
+            cache_key = self._generate_cache_key('queryset', permanent=True)
+
+        if not should_cache:
+            return list(super(CachedQuerySet, self).iterator())
+
+        # Try to get from cache
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            cache_retrieval_log(cache_key)
+            return cached_result
+
+        # Cache miss - execute query and cache results
+        cache_miss_log(cache_key)
+        result = list(super(CachedQuerySet, self).iterator())
+        timeout = self._get_timeout()
+        cache.set(cache_key, result, timeout)
+        cache_hit_log(cache_key, timeout)
+        return result
+
+    def update(self, **kwargs):
+        """Override update - permanent cache doesn't get invalidated automatically."""
+        return super(CachedQuerySet, self).update(**kwargs)
+
+    def delete(self):
+        """Override delete - permanent cache doesn't get invalidated automatically."""
+        return super(CachedQuerySet, self).delete()
+
+
+class CachedManager(models.Manager):
+    """
+    Custom Manager that returns CachedQuerySet instances.
+    """
+
+    def get_queryset(self):
+        return CachedQuerySet(self.model, using=self._db)
+
+    @property
+    def no_cache(self):
+        """Return a manager that doesn't use cache."""
+        return self.get_queryset().no_cache()
+
+    @property
+    def permanent_cache(self):
+        """Return a manager that uses permanent caching."""
+        return PermanentCachedQuerySet(self.model, using=self._db)
+
+    def invalidate_cache(self, invalidate_all=False):
+        """
+        Invalidate cache for this model.
+
+        Args:
+            invalidate_all (bool): If True, also invalidates permanent cache.
+                                 If False, only invalidates regular cache.
+        """
+        invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
+
+    def bulk_create(self, objs, batch_size=None, ignore_conflicts=False, update_conflicts=False, update_fields=None, unique_fields=None):
+        """Override bulk_create to invalidate cache after bulk operations."""
+        result = super().bulk_create(
+            objs,
+            batch_size=batch_size,
+            ignore_conflicts=ignore_conflicts,
+            update_conflicts=update_conflicts,
+            update_fields=update_fields,
+            unique_fields=unique_fields
+        )
+        # Invalidate cache after bulk create
+        self._invalidate_cache()
+        return result
+
+    def bulk_update(self, objs, fields, batch_size=None):
+        """Override bulk_update to invalidate cache after bulk operations."""
+        result = super().bulk_update(objs, fields, batch_size=batch_size)
+        # Invalidate cache after bulk update
+        self._invalidate_cache()
+        return result
+
+    def _invalidate_cache(self):
+        """Helper method to invalidate cache for this model."""
+        invalidate_model_cache(self.model)
+
+
+class CacheMeOptions:
+    """
+    Base configuration class for model caching options.
+    """
+
+    cache_table = False  # Cache entire table when .all() is executed
+    cache_queryset = True  # Cache querysets with complex filtering
+    timeout = None  # Custom timeout for this model (uses default if None)
+
+    def __init__(self, model_class: Type[models.Model]):
+        self.model = model_class
+
+
+class CacheMeRegistry:
+    """
+    Registry to store model caching configurations.
+    """
+
+    def __init__(self):
+        self._registry: Dict[Type[models.Model], CacheMeOptions] = {}
+
+    def register(self, model_class: Type[models.Model], options_class: Type[CacheMeOptions] = None):
+        """
+        Register a model with caching options.
+        """
+        if options_class is None:
+            options_class = CacheMeOptions
+
+        options = options_class(model_class)
+        self._registry[model_class] = options
+
+        # Patch the model's manager to enable caching
+        self._patch_model_manager(model_class, options)
+
+    def _patch_model_manager(self, model_class: Type[models.Model], options: CacheMeOptions):
+        """
+        Patch the model's default manager to add caching capabilities using mixin approach.
+        """
+        # Handle cases where the default manager might not be properly set up (e.g., abstract models)
+        if not hasattr(model_class, '_default_manager') or model_class._default_manager is None:
+            # For abstract models or models without proper managers, just store the options
+            # The actual manager patching will happen when the model is properly instantiated
+            return
+
+        original_manager_class = model_class._default_manager.__class__
+
+        # Additional safety check for None manager class
+        if original_manager_class is None:
+            # Fallback to django's default Manager
+            from django.db import models as django_models
+            original_manager_class = django_models.Manager
+
+        # Check if we've already patched this manager class
+        cache_manager_name = f"Cached{original_manager_class.__name__}"
+
+        # Create a new manager class that inherits from both CachedManager and original manager
+        cached_manager_class = type(
+            cache_manager_name,
+            (CachedManager, original_manager_class),
+            {
+                '__module__': original_manager_class.__module__,
+            }
+        )
+
+        # Create an instance of the new mixed manager
+        cached_manager = cached_manager_class()
+
+        # Copy attributes from the original manager more carefully
+        original_manager = model_class._default_manager
+        for attr_name in dir(original_manager):
+            if (not attr_name.startswith('_') and
+                hasattr(original_manager, attr_name) and
+                attr_name not in ['model', 'db']):  # Skip attributes we'll set manually
+
+                try:
+                    attr_value = getattr(original_manager, attr_name)
+                    # Only copy non-callable attributes that aren't properties
+                    if (not callable(attr_value) and
+                        not isinstance(getattr(original_manager_class, attr_name, None), property)):
+                        setattr(cached_manager, attr_name, attr_value)
+                except (AttributeError, TypeError):
+                    # Skip attributes that can't be copied (properties, descriptors, etc.)
+                    continue
+
+        # Set the essential manager attributes manually
+        cached_manager.model = model_class
+        cached_manager._db = original_manager._db
+
+        # Store reference to original manager for potential restoration
+        if not hasattr(model_class, '_original_manager_instance'):
+            model_class._original_manager_instance = original_manager
+
+        # Use Django's proper way to replace the manager
+        # We need to modify the _meta.managers list and replace the objects attribute
+        model_class.objects = cached_manager
+
+        # Replace in the _meta.managers list - handle different Django versions and manager structures
+        try:
+            if hasattr(model_class._meta, 'managers'):
+                managers = model_class._meta.managers
+                # Check if managers is iterable and contains tuples
+                if hasattr(managers, '__iter__'):
+                    # Try to iterate through managers
+                    for i, manager_item in enumerate(managers):
+                        try:
+                            # Handle different manager structures
+                            if isinstance(manager_item, tuple) and len(manager_item) == 2:
+                                name, manager = manager_item
+                                if name == 'objects' or manager is original_manager:
+                                    model_class._meta.managers[i] = (name, cached_manager)
+                                    break
+                            elif hasattr(manager_item, 'name'):
+                                # Some manager structures have a name attribute
+                                if manager_item.name == 'objects' or manager_item is original_manager:
+                                    # Replace the manager instance
+                                    model_class._meta.managers[i] = cached_manager
+                                    break
+                        except (TypeError, AttributeError):
+                            # Skip problematic manager entries
+                            continue
+        except (AttributeError, TypeError):
+            # If we can't modify _meta.managers, that's okay - the objects attribute replacement is the main thing
+            pass
+
+    def get_options(self, model_class: Type[models.Model]) -> CacheMeOptions:
+        """
+        Get caching options for a model.
+        """
+        return self._registry.get(model_class)
+
+    def is_registered(self, model_class: Type[models.Model]) -> bool:
+        """
+        Check if a model is registered for caching.
+        """
+        return model_class in self._registry
+
+    def get_registered_models(self):
+        """
+        Get all registered models.
+        """
+        return list(self._registry.keys())
+
+
+# Global registry instance
+cache_me_registry = CacheMeRegistry()
+
+
+def cache_me_register(model_class: Type[models.Model]):
+    """
+    Decorator to register a model with caching options.
+
+    Usage:
+        @cache_me_register(Account)
+        class AccountCacheMeOption(CacheMeOptions):
+            cache_table = True
+            cache_queryset = True
+    """
+    def decorator(options_class: Type[CacheMeOptions]):
+        cache_me_registry.register(model_class, options_class)
+        return options_class
+    return decorator
