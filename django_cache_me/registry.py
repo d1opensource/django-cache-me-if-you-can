@@ -306,8 +306,113 @@ class PermanentCachedQuerySet(CachedQuerySet):
 class CachedManager(models.Manager):
     """Custom Manager that returns CachedQuerySet instances."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._cached_queryset_class = None
+
+    def _get_cached_queryset_class(self):
+        """Create a dynamic queryset class that combines CachedQuerySet with the original queryset."""
+        if self._cached_queryset_class is not None:
+            return self._cached_queryset_class
+
+        # Get the original queryset class from the parent manager classes
+        original_queryset_class = None
+
+        # Look through the MRO to find the original get_queryset method
+        # Skip CachedManager and any previously created cached classes
+        for base_class in self.__class__.__mro__:
+            if (
+                base_class != CachedManager
+                and hasattr(base_class, "get_queryset")
+                and not base_class.__name__.startswith("Cached")
+            ):
+                try:
+                    # Create a temporary instance to get the original queryset class
+                    temp_manager = base_class()
+                    temp_manager.model = self.model
+                    temp_manager._db = self._db
+                    original_qs = temp_manager.get_queryset()
+                    original_queryset_class = original_qs.__class__
+                    # Make sure we don't get a Cached class
+                    if not original_queryset_class.__name__.startswith("Cached"):
+                        break
+                except Exception:
+                    continue
+
+        # Fallback to Django's default QuerySet
+        if original_queryset_class is None:
+            from django.db.models.query import QuerySet
+
+            original_queryset_class = QuerySet
+
+        # Only create a new class if the original is not already CachedQuerySet or a Cached variant
+        if original_queryset_class == CachedQuerySet or original_queryset_class.__name__.startswith("Cached"):
+            self._cached_queryset_class = CachedQuerySet
+        else:
+            # Create a dynamic class that inherits from both CachedQuerySet and the original queryset
+            cached_queryset_name = f"Cached{original_queryset_class.__name__}"
+
+            try:
+                # Try the normal approach first
+                self._cached_queryset_class = type(
+                    cached_queryset_name,
+                    (CachedQuerySet, original_queryset_class),
+                    {
+                        "__module__": original_queryset_class.__module__,
+                    },
+                )
+            except TypeError as e:
+                if "consistent method resolution order" in str(e):
+                    # MRO conflict - use composition approach instead of inheritance
+                    # Create a class that inherits from CachedQuerySet and delegates missing methods
+                    class CachedQuerySetWithDelegation(CachedQuerySet):
+                        def __init__(self, *args, **kwargs):
+                            super().__init__(*args, **kwargs)
+                            # Store the original queryset class for delegation
+                            self._original_queryset_class = original_queryset_class
+
+                        def __getattr__(self, name):
+                            # If the method doesn't exist on CachedQuerySet, try to get it from the original
+                            if hasattr(self._original_queryset_class, name):
+                                original_method = getattr(self._original_queryset_class, name)
+                                if callable(original_method):
+                                    # Create a wrapper that applies the method to a clone of this queryset
+                                    def method_wrapper(*args, **kwargs):
+                                        # Create an instance of the original queryset class with our data
+                                        original_qs = self._original_queryset_class(self.model, using=self._db)
+                                        # Copy our query state
+                                        original_qs.query = self.query.clone()
+                                        # Call the original method
+                                        result = original_method(original_qs, *args, **kwargs)
+                                        # If the result is a QuerySet, wrap it back in our cached version
+                                        if isinstance(result, QuerySet):
+                                            cached_result = self.__class__(self.model, using=self._db)
+                                            cached_result.query = result.query.clone()
+                                            cached_result._use_cache = getattr(self, "_use_cache", True)
+                                            cached_result._is_permanent_cache = getattr(
+                                                self, "_is_permanent_cache", False
+                                            )
+                                            return cached_result
+                                        return result
+
+                                    return method_wrapper
+                                return original_method
+                            msg = f"'{self._original_queryset_class.__name__}' object has no attribute '{name}'"
+                            raise AttributeError(msg)
+
+                    # Give it a proper name
+                    CachedQuerySetWithDelegation.__name__ = cached_queryset_name
+                    CachedQuerySetWithDelegation.__qualname__ = cached_queryset_name
+                    self._cached_queryset_class = CachedQuerySetWithDelegation
+                else:
+                    # Different error, re-raise
+                    raise
+
+        return self._cached_queryset_class
+
     def get_queryset(self):
-        return CachedQuerySet(self.model, using=self._db)
+        cached_queryset_class = self._get_cached_queryset_class()
+        return cached_queryset_class(self.model, using=self._db)
 
     @property
     def no_cache(self):
