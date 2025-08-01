@@ -1,8 +1,9 @@
 import logging
+
 from django.conf import settings
 
 # Configure logger for cache debug messages
-logger = logging.getLogger('django_cache_me')
+logger = logging.getLogger("django_cache_me")
 
 
 def get_setting(name, default):
@@ -12,27 +13,27 @@ def get_setting(name, default):
 
 def is_cache_enabled():
     """Check if caching is enabled globally."""
-    return get_setting('DJANGO_CACHE_ME_ON', True)
+    return get_setting("DJANGO_CACHE_ME_ON", True)
 
 
 def is_debug_mode():
     """Check if debug mode is enabled."""
-    return get_setting('DJANGO_CACHE_ME_DEBUG_MODE', False)
+    return get_setting("DJANGO_CACHE_ME_DEBUG_MODE", False)
 
 
 def get_default_timeout():
     """Get the default cache timeout."""
-    return get_setting('DJANGO_CACHE_ME_TIMEOUT', 300)
+    return get_setting("DJANGO_CACHE_ME_TIMEOUT", 300)
 
 
 def debug_log(message, *args):
     """Log debug message if debug mode is enabled."""
     if is_debug_mode():
         if args:
-            message = message % args
+            message %= args
         logger.info(message)
         # Also print to stdout for immediate visibility
-        print(f"[django-cache-me] {message}")
+        print(f"[django-cache-me] {message}")  # noqa: T201
 
 
 def cache_hit_log(cache_key, timeout):
@@ -48,6 +49,11 @@ def cache_miss_log(cache_key):
 def cache_retrieval_log(cache_key):
     """Log when data is retrieved from cache."""
     debug_log("Retrieving data from key '%s' from cache", cache_key)
+
+
+def empty_queryset_log(cache_key):
+    """Log when a cached queryset is empty."""
+    debug_log("'%s' resulted in an empty queryset. Nothing will be cached.", cache_key)
 
 
 def cache_invalidation_log(model_name, permanent=False):

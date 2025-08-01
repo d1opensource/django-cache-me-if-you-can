@@ -5,7 +5,7 @@ from django.core.cache import cache
 from django.db import models
 from django.db.models.query import QuerySet
 
-from .settings import cache_hit_log, cache_miss_log, cache_retrieval_log, is_cache_enabled
+from .settings import cache_hit_log, cache_miss_log, cache_retrieval_log, empty_queryset_log, is_cache_enabled
 from .signals import invalidate_model_cache
 
 
@@ -114,6 +114,12 @@ class CachedQuerySet(QuerySet):
         # Cache miss - execute query and cache results
         cache_miss_log(cache_key)
         result = list(super().iterator())
+
+        # Skip caching if the result is empty
+        if not result:
+            empty_queryset_log(cache_key)
+            return result
+
         timeout = self._get_timeout()
         cache.set(cache_key, result, timeout)
         cache_hit_log(cache_key, timeout)
