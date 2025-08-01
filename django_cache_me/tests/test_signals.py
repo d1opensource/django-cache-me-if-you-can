@@ -6,7 +6,6 @@ from django.core.cache import cache
 from django.db import models
 from django.test import TestCase, override_settings
 
-from django_cache_me.model_mixin import CacheMeInvalidationMixin
 from django_cache_me.registry import CacheMeOptions, cache_me_registry
 from django_cache_me.signals import (
     auto_invalidate_cache,
@@ -155,12 +154,6 @@ class TestCacheInvalidationSignals(TestCase):
             invalidate_model_cache(TestModel)
         except Exception as e:
             self.fail(f"invalidate_model_cache should not raise exception in debug mode: {e}")
-
-    def test_cache_invalidation_mixin_functionality(self):
-        """Test CacheInvalidationMixin functionality."""
-        # Test that the mixin exists and can be used
-        self.assertTrue(hasattr(CacheMeInvalidationMixin, "save"))
-        self.assertTrue(hasattr(CacheMeInvalidationMixin, "delete"))
 
     @patch("django_cache_me.signals.cache")
     def test_cache_deletion_patterns(self, mock_cache):

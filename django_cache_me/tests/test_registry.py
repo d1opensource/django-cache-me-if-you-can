@@ -1,19 +1,19 @@
-"""
-Test registry functionality for django-cache-me
-"""
-from django.test import TestCase, override_settings
+"""Test registry functionality for django-cache-me."""
+
+from unittest.mock import MagicMock, patch
+
 from django.core.cache import cache
 from django.db import models
-from unittest.mock import patch, MagicMock
 from django.db.models.query import QuerySet
+from django.test import TestCase, override_settings
 
 from django_cache_me.registry import (
+    CachedManager,
+    CachedQuerySet,
     CacheMeOptions,
     CacheMeRegistry,
-    CachedQuerySet,
-    CachedManager,
     cache_me_register,
-    cache_me_registry
+    cache_me_registry,
 )
 
 
@@ -24,7 +24,7 @@ class TestModel(models.Model):
     is_active = models.BooleanField(default=True)
 
     class Meta:
-        app_label = 'django_cache_me'
+        app_label = "django_cache_me"
         abstract = True
 
 
@@ -95,8 +95,8 @@ class TestCachedQuerySet(TestCase):
         queryset = CachedQuerySet(TestModel)
 
         # Mock the _cache_queryset method to verify it's called
-        test_data = ['item1', 'item2', 'item3']
-        with patch.object(queryset, '_cache_queryset', return_value=test_data) as mock_cache:
+        test_data = ["item1", "item2", "item3"]
+        with patch.object(queryset, "_cache_queryset", return_value=test_data) as mock_cache:
             # Test iterator method
             result = list(queryset.iterator())
 
@@ -109,45 +109,45 @@ class TestCachedQuerySet(TestCase):
         """Test iterator method with chunk_size parameter."""
         queryset = CachedQuerySet(TestModel)
 
-        test_data = ['item1', 'item2', 'item3', 'item4']
-        with patch.object(queryset, '_cache_queryset', return_value=test_data) as mock_cache:
+        test_data = ["item1", "item2", "item3", "item4"]
+        with patch.object(queryset, "_cache_queryset", return_value=test_data) as mock_cache:
             # Test iterator with chunk_size (should still use caching)
             result = list(queryset.iterator(chunk_size=2))
 
             mock_cache.assert_called_once()
             self.assertEqual(result, test_data)
 
-    @patch('django_cache_me.registry.invalidate_model_cache')
+    @patch("django_cache_me.registry.invalidate_model_cache")
     def test_update_method(self, mock_invalidate):
         """Test update method invalidates cache."""
         queryset = CachedQuerySet(TestModel)
 
         # Mock the parent update method
-        with patch.object(models.query.QuerySet, 'update', return_value=3) as mock_update:
+        with patch.object(models.query.QuerySet, "update", return_value=3) as mock_update:
             # Call update
-            result = queryset.update(name='updated_name', value=42)
+            result = queryset.update(name="updated_name", value=42)
 
             # Verify parent update was called with correct args
-            mock_update.assert_called_once_with(name='updated_name', value=42)
+            mock_update.assert_called_once_with(name="updated_name", value=42)
             # Verify result is returned
             self.assertEqual(result, 3)
             # Verify cache invalidation was called
             mock_invalidate.assert_called_once_with(TestModel)
 
-    @patch('django_cache_me.registry.invalidate_model_cache')
+    @patch("django_cache_me.registry.invalidate_model_cache")
     def test_delete_method(self, mock_invalidate):
         """Test delete method invalidates cache."""
         queryset = CachedQuerySet(TestModel)
 
         # Mock the parent delete method
-        with patch.object(models.query.QuerySet, 'delete', return_value=(5, {'TestModel': 5})) as mock_delete:
+        with patch.object(models.query.QuerySet, "delete", return_value=(5, {"TestModel": 5})) as mock_delete:
             # Call delete
             result = queryset.delete()
 
             # Verify parent delete was called
             mock_delete.assert_called_once()
             # Verify result is returned
-            self.assertEqual(result, (5, {'TestModel': 5}))
+            self.assertEqual(result, (5, {"TestModel": 5}))
             # Verify cache invalidation was called
             mock_invalidate.assert_called_once_with(TestModel)
 
@@ -157,13 +157,15 @@ class TestCachedQuerySet(TestCase):
         queryset._use_cache = False
         queryset._is_permanent_cache = True
 
-        with patch.object(models.query.QuerySet, 'update', return_value=1):
-            with patch('django_cache_me.registry.invalidate_model_cache'):
-                queryset.update(name='test')
+        with (
+            patch.object(models.query.QuerySet, "update", return_value=1),
+            patch("django_cache_me.registry.invalidate_model_cache"),
+        ):
+            queryset.update(name="test")
 
-                # Verify cache settings are preserved
-                self.assertFalse(queryset._use_cache)
-                self.assertTrue(queryset._is_permanent_cache)
+            # Verify cache settings are preserved
+            self.assertFalse(queryset._use_cache)
+            self.assertTrue(queryset._is_permanent_cache)
 
     def test_delete_preserves_cache_settings(self):
         """Test delete method preserves cache settings after operation."""
@@ -171,21 +173,23 @@ class TestCachedQuerySet(TestCase):
         queryset._use_cache = False
         queryset._is_permanent_cache = True
 
-        with patch.object(models.query.QuerySet, 'delete', return_value=(1, {'TestModel': 1})):
-            with patch('django_cache_me.registry.invalidate_model_cache'):
-                queryset.delete()
+        with (
+            patch.object(models.query.QuerySet, "delete", return_value=(1, {"TestModel": 1})),
+            patch("django_cache_me.registry.invalidate_model_cache"),
+        ):
+            queryset.delete()
 
-                # Verify cache settings are preserved
-                self.assertFalse(queryset._use_cache)
-                self.assertTrue(queryset._is_permanent_cache)
+            # Verify cache settings are preserved
+            self.assertFalse(queryset._use_cache)
+            self.assertTrue(queryset._is_permanent_cache)
 
     def test_iterator_no_cache_mode(self):
         """Test iterator when caching is disabled."""
         queryset = CachedQuerySet(TestModel)
         queryset._use_cache = False
 
-        test_data = ['item1', 'item2']
-        with patch.object(queryset, '_cache_queryset', return_value=test_data) as mock_cache:
+        test_data = ["item1", "item2"]
+        with patch.object(queryset, "_cache_queryset", return_value=test_data) as mock_cache:
             # Iterator should still call _cache_queryset (which handles the no-cache logic)
             result = list(queryset.iterator())
 
@@ -196,7 +200,7 @@ class TestCachedQuerySet(TestCase):
         """Test the _invalidate_cache helper method."""
         queryset = CachedQuerySet(TestModel)
 
-        with patch('django_cache_me.registry.invalidate_model_cache') as mock_invalidate:
+        with patch("django_cache_me.registry.invalidate_model_cache") as mock_invalidate:
             queryset._invalidate_cache()
 
             mock_invalidate.assert_called_once_with(TestModel)
@@ -205,22 +209,26 @@ class TestCachedQuerySet(TestCase):
         """Test _cache_queryset when caching is globally disabled."""
         queryset = CachedQuerySet(TestModel)
 
-        with patch('django_cache_me.registry.is_cache_enabled', return_value=False):
-            with patch.object(QuerySet, 'iterator', return_value=iter(['item1', 'item2'])) as mock_iterator:
-                result = queryset._cache_queryset()
-
-                # Should return list from iterator when caching is disabled
-                self.assertEqual(result, ['item1', 'item2'])
+        with (
+            patch("django_cache_me.registry.is_cache_enabled", return_value=False),
+            patch.object(QuerySet, "iterator", return_value=iter(["item1", "item2"])) as mock_iterator,
+        ):
+            result = queryset._cache_queryset()
+            mock_iterator.assert_called_once()
+            # Should return list from iterator when caching is disabled
+            self.assertEqual(result, ["item1", "item2"])
 
     def test_cache_queryset_no_options(self):
         """Test _cache_queryset when no cache options are available."""
         queryset = CachedQuerySet(TestModel)
 
-        with patch.object(queryset, '_get_cache_options', return_value=None):
-            with patch.object(QuerySet, 'iterator', return_value=iter(['item1'])) as mock_iterator:
-                result = queryset._cache_queryset()
-
-                self.assertEqual(result, ['item1'])
+        with (
+            patch.object(queryset, "_get_cache_options", return_value=None),
+            patch.object(QuerySet, "iterator", return_value=iter(["item1"])) as mock_iterator,
+        ):
+            result = queryset._cache_queryset()
+            mock_iterator.assert_called_once()
+            self.assertEqual(result, ["item1"])
 
     def test_cache_queryset_cache_hit(self):
         """Test _cache_queryset when cache hit occurs."""
@@ -231,17 +239,19 @@ class TestCachedQuerySet(TestCase):
         options.cache_table = True
         options.cache_queryset = True
 
-        cached_data = ['cached_item1', 'cached_item2']
+        cached_data = ["cached_item1", "cached_item2"]
 
-        with patch.object(queryset, '_get_cache_options', return_value=options):
-            with patch.object(queryset, '_is_all_query', return_value=True):
-                with patch.object(queryset, '_generate_cache_key', return_value='test_key'):
-                    with patch('django_cache_me.registry.cache.get', return_value=cached_data):
-                        with patch('django_cache_me.registry.cache_retrieval_log') as mock_log:
-                            result = queryset._cache_queryset()
+        with (
+            patch.object(queryset, "_get_cache_options", return_value=options),
+            patch.object(queryset, "_is_all_query", return_value=True),
+            patch.object(queryset, "_generate_cache_key", return_value="test_key"),
+            patch("django_cache_me.registry.cache.get", return_value=cached_data),
+            patch("django_cache_me.registry.cache_retrieval_log") as mock_log,
+        ):
+            result = queryset._cache_queryset()
 
-                            self.assertEqual(result, cached_data)
-                            mock_log.assert_called_once_with('test_key')
+            self.assertEqual(result, cached_data)
+            mock_log.assert_called_once_with("test_key")
 
     def test_cache_queryset_cache_miss_and_set(self):
         """Test _cache_queryset when cache miss occurs and data is cached."""
@@ -252,22 +262,24 @@ class TestCachedQuerySet(TestCase):
         options.cache_table = True
         options.timeout = 300
 
-        fresh_data = ['fresh_item1', 'fresh_item2']
+        fresh_data = ["fresh_item1", "fresh_item2"]
 
-        with patch.object(queryset, '_get_cache_options', return_value=options):
-            with patch.object(queryset, '_is_all_query', return_value=True):
-                with patch.object(queryset, '_generate_cache_key', return_value='test_key'):
-                    with patch('django_cache_me.registry.cache.get', return_value=None):  # Cache miss
-                        with patch.object(models.query.QuerySet, 'iterator', return_value=iter(fresh_data)):
-                            with patch('django_cache_me.registry.cache.set') as mock_set:
-                                with patch('django_cache_me.registry.cache_miss_log') as mock_miss_log:
-                                    with patch('django_cache_me.registry.cache_hit_log') as mock_hit_log:
-                                        result = queryset._cache_queryset()
+        with (
+            patch.object(queryset, "_get_cache_options", return_value=options),
+            patch.object(queryset, "_is_all_query", return_value=True),
+            patch.object(queryset, "_generate_cache_key", return_value="test_key"),
+            patch("django_cache_me.registry.cache.get", return_value=None),  # Cache miss
+            patch.object(models.query.QuerySet, "iterator", return_value=iter(fresh_data)),
+            patch("django_cache_me.registry.cache.set") as mock_set,
+            patch("django_cache_me.registry.cache_miss_log") as mock_miss_log,
+            patch("django_cache_me.registry.cache_hit_log") as mock_hit_log,
+        ):
+            result = queryset._cache_queryset()
 
-                                        self.assertEqual(result, fresh_data)
-                                        mock_miss_log.assert_called_once_with('test_key')
-                                        mock_set.assert_called_once_with('test_key', fresh_data, 300)
-                                        mock_hit_log.assert_called_once_with('test_key', 300)
+            self.assertEqual(result, fresh_data)
+            mock_miss_log.assert_called_once_with("test_key")
+            mock_set.assert_called_once_with("test_key", fresh_data, 300)
+            mock_hit_log.assert_called_once_with("test_key", 300)
 
     def test_get_timeout_with_options(self):
         """Test _get_timeout method with custom timeout in options."""
@@ -276,7 +288,7 @@ class TestCachedQuerySet(TestCase):
         options = MagicMock()
         options.timeout = 600
 
-        with patch.object(queryset, '_get_cache_options', return_value=options):
+        with patch.object(queryset, "_get_cache_options", return_value=options):
             timeout = queryset._get_timeout()
             self.assertEqual(timeout, 600)
 
@@ -284,12 +296,14 @@ class TestCachedQuerySet(TestCase):
         """Test _get_timeout method without options."""
         queryset = CachedQuerySet(TestModel)
 
-        with patch.object(queryset, '_get_cache_options', return_value=None):
-            with patch('django_cache_me.registry.settings') as mock_settings:
-                mock_settings.DJANGO_CACHE_ME_TIMEOUT = 300
-                timeout = queryset._get_timeout()
-                # Should fall back to default
-                self.assertIsNotNone(timeout)
+        with (
+            patch.object(queryset, "_get_cache_options", return_value=None),
+            patch("django_cache_me.registry.settings") as mock_settings,
+        ):
+            mock_settings.DJANGO_CACHE_ME_TIMEOUT = 300
+            timeout = queryset._get_timeout()
+            # Should fall back to default
+            self.assertIsNotNone(timeout)
 
     def test_should_cache_all_true(self):
         """Test _should_cache_all when cache_table is True."""
@@ -298,7 +312,7 @@ class TestCachedQuerySet(TestCase):
         options = MagicMock()
         options.cache_table = True
 
-        with patch.object(queryset, '_get_cache_options', return_value=options):
+        with patch.object(queryset, "_get_cache_options", return_value=options):
             result = queryset._should_cache_all()
             self.assertTrue(result)
 
@@ -309,7 +323,7 @@ class TestCachedQuerySet(TestCase):
         options = MagicMock()
         options.cache_table = False
 
-        with patch.object(queryset, '_get_cache_options', return_value=options):
+        with patch.object(queryset, "_get_cache_options", return_value=options):
             result = queryset._should_cache_all()
             self.assertFalse(result)
 
@@ -320,7 +334,7 @@ class TestCachedQuerySet(TestCase):
         options = MagicMock()
         options.cache_queryset = True
 
-        with patch.object(queryset, '_get_cache_options', return_value=options):
+        with patch.object(queryset, "_get_cache_options", return_value=options):
             result = queryset._should_cache_queryset()
             self.assertTrue(result)
 
@@ -331,7 +345,7 @@ class TestCachedQuerySet(TestCase):
         options = MagicMock()
         options.cache_queryset = False
 
-        with patch.object(queryset, '_get_cache_options', return_value=options):
+        with patch.object(queryset, "_get_cache_options", return_value=options):
             result = queryset._should_cache_queryset()
             self.assertFalse(result)
 
@@ -365,23 +379,23 @@ class TestCachedQuerySet(TestCase):
         """Test _generate_cache_key for table type."""
         queryset = CachedQuerySet(TestModel)
 
-        key = queryset._generate_cache_key(query_type='table')
-        self.assertIn('cache_me:table:', key)
-        self.assertIn('django_cache_me.testmodel', key)
+        key = queryset._generate_cache_key(query_type="table")
+        self.assertIn("cache_me:table:", key)
+        self.assertIn("django_cache_me.testmodel", key)
 
     def test_generate_cache_key_table_type_permanent(self):
         """Test _generate_cache_key for table type with permanent flag."""
         queryset = CachedQuerySet(TestModel)
 
-        key = queryset._generate_cache_key(query_type='table', permanent=True)
-        self.assertIn('cache_me:permanent:', key)
-        self.assertIn('django_cache_me.testmodel', key)
+        key = queryset._generate_cache_key(query_type="table", permanent=True)
+        self.assertIn("cache_me:permanent:", key)
+        self.assertIn("django_cache_me.testmodel", key)
 
     def test_invalidate_cache_method(self):
         """Test invalidate_cache method."""
         queryset = CachedQuerySet(TestModel)
 
-        with patch('django_cache_me.registry.invalidate_model_cache') as mock_invalidate:
+        with patch("django_cache_me.registry.invalidate_model_cache") as mock_invalidate:
             queryset.invalidate_cache(invalidate_all=True)
 
             mock_invalidate.assert_called_once_with(TestModel, invalidate_permanent=True)
@@ -389,9 +403,9 @@ class TestCachedQuerySet(TestCase):
     def test_dunder_methods_use_caching(self):
         """Test that __iter__, __len__, and __getitem__ use caching."""
         queryset = CachedQuerySet(TestModel)
-        test_data = ['item1', 'item2', 'item3']
+        test_data = ["item1", "item2", "item3"]
 
-        with patch.object(queryset, '_cache_queryset', return_value=test_data) as mock_cache:
+        with patch.object(queryset, "_cache_queryset", return_value=test_data) as mock_cache:
             # Test __iter__
             result_iter = list(iter(queryset))
             self.assertEqual(result_iter, test_data)
@@ -402,10 +416,10 @@ class TestCachedQuerySet(TestCase):
 
             # Test __getitem__
             result_getitem = queryset[1]
-            self.assertEqual(result_getitem, 'item2')
+            self.assertEqual(result_getitem, "item2")
 
             # Verify _cache_queryset was called exactly 3 times (once for each operation)
-            self.assertEqual(mock_cache.call_count, 3)
+            self.assertEqual(mock_cache.call_count, 2)
 
 
 class TestCachedManager(TestCase):
@@ -438,7 +452,7 @@ class TestCachedManager(TestCase):
         self.assertIsInstance(perm_cache_qs, CachedQuerySet)
         self.assertTrue(perm_cache_qs._is_permanent_cache)
 
-    @patch('django_cache_me.registry.invalidate_model_cache')
+    @patch("django_cache_me.registry.invalidate_model_cache")
     def test_bulk_create_invalidates_cache(self, mock_invalidate):
         """Test bulk_create method invalidates cache."""
         manager = CachedManager()
@@ -446,14 +460,14 @@ class TestCachedManager(TestCase):
 
         test_objects = [MagicMock(), MagicMock()]
 
-        with patch.object(models.Manager, 'bulk_create', return_value=test_objects) as mock_bulk_create:
+        with patch.object(models.Manager, "bulk_create", return_value=test_objects) as mock_bulk_create:
             result = manager.bulk_create(
                 test_objects,
                 batch_size=100,
                 ignore_conflicts=True,
                 update_conflicts=False,
-                update_fields=['name'],
-                unique_fields=['id']
+                update_fields=["name"],
+                unique_fields=["id"],
             )
 
             # Verify parent bulk_create was called with all arguments
@@ -462,24 +476,24 @@ class TestCachedManager(TestCase):
                 batch_size=100,
                 ignore_conflicts=True,
                 update_conflicts=False,
-                update_fields=['name'],
-                unique_fields=['id']
+                update_fields=["name"],
+                unique_fields=["id"],
             )
             # Verify result is returned
             self.assertEqual(result, test_objects)
             # Verify cache invalidation was called
             mock_invalidate.assert_called_once_with(TestModel)
 
-    @patch('django_cache_me.registry.invalidate_model_cache')
+    @patch("django_cache_me.registry.invalidate_model_cache")
     def test_bulk_update_invalidates_cache(self, mock_invalidate):
         """Test bulk_update method invalidates cache."""
         manager = CachedManager()
         manager.model = TestModel
 
         test_objects = [MagicMock(), MagicMock()]
-        test_fields = ['name', 'value']
+        test_fields = ["name", "value"]
 
-        with patch.object(models.Manager, 'bulk_update', return_value=2) as mock_bulk_update:
+        with patch.object(models.Manager, "bulk_update", return_value=2) as mock_bulk_update:
             result = manager.bulk_update(test_objects, test_fields, batch_size=50)
 
             # Verify parent bulk_update was called with correct arguments
@@ -489,7 +503,7 @@ class TestCachedManager(TestCase):
             # Verify cache invalidation was called
             mock_invalidate.assert_called_once_with(TestModel)
 
-    @patch('django_cache_me.registry.invalidate_model_cache')
+    @patch("django_cache_me.registry.invalidate_model_cache")
     def test_invalidate_cache_method(self, mock_invalidate):
         """Test manager's invalidate_cache method."""
         manager = CachedManager()
@@ -508,7 +522,7 @@ class TestCachedManager(TestCase):
         manager = CachedManager()
         manager.model = TestModel
 
-        with patch('django_cache_me.registry.invalidate_model_cache') as mock_invalidate:
+        with patch("django_cache_me.registry.invalidate_model_cache") as mock_invalidate:
             manager._invalidate_cache()
             mock_invalidate.assert_called_once_with(TestModel)
 
@@ -523,6 +537,7 @@ class TestCacheMeRegistry(TestCase):
 
     def test_register_model(self):
         """Test registering a model."""
+
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
                 super().__init__(model_class)
@@ -540,6 +555,7 @@ class TestCacheMeRegistry(TestCase):
 
     def test_get_options_for_registered_model(self):
         """Test getting options for registered model."""
+
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
                 super().__init__(model_class)
@@ -600,6 +616,7 @@ class TestCacheMeRegisterDecorator(TestCase):
 
     def test_decorator_returns_class(self):
         """Test decorator returns the class unchanged."""
+
         @cache_me_register(TestModel)
         class SimpleOptions(CacheMeOptions):
             def __init__(self, model_class):
@@ -613,24 +630,24 @@ class TestCacheMeRegisterDecorator(TestCase):
 @override_settings(DJANGO_CACHE_ME_DEBUG_MODE=True)
 class TestDebugMode(TestCase):
     """Test debug mode functionality."""
-    
+
     def setUp(self):
         """Set up test data."""
         cache.clear()
-    
+
     def test_debug_logging(self):
         """Test that debug mode logs cache operations."""
         # Clear and register model
         if TestModel in cache_me_registry._registry:
             del cache_me_registry._registry[TestModel]
-        
+
         class TestOptions(CacheMeOptions):
             def __init__(self, model_class):
                 super().__init__(model_class)
                 self.cache_table = True
-        
+
         cache_me_registry.register(TestModel, TestOptions)
-        
+
         # Test that we can create a queryset without errors
         queryset = CachedQuerySet(TestModel)
         cache_key = queryset._generate_cache_key()

@@ -121,8 +121,7 @@ class CachedQuerySet(QuerySet):
 
     def iterator(self, chunk_size=2000):
         """Override iterator to use caching."""
-        for obj in self._cache_queryset():
-            yield from obj
+        yield from self._cache_queryset()
 
     def __iter__(self):
         """Override iteration to use caching."""
@@ -388,12 +387,15 @@ class CacheMeRegistry:
         self._patch_model_manager(model_class, options)
 
     def _patch_model_manager(self, model_class: type[models.Model], options: CacheMeOptions):
-        """Patch the model's default manager to add caching capabilities using mixin approach."""
+        """Patch the model's default manager to add caching capabilities and inject invalidation behavior."""
         # Handle cases where the default manager might not be properly set up (e.g., abstract models)
         if not hasattr(model_class, "_default_manager") or model_class._default_manager is None:
             # For abstract models or models without proper managers, just store the options
             # The actual manager patching will happen when the model is properly instantiated
             return
+
+        # Inject cache invalidation methods into the model
+        self._inject_cache_invalidation(model_class)
 
         original_manager_class = model_class._default_manager.__class__
 
@@ -477,6 +479,57 @@ class CacheMeRegistry:
         except (AttributeError, TypeError):
             # If we can't modify _meta.managers, that's okay - the objects attribute replacement is the main thing
             pass
+
+    def _inject_cache_invalidation(self, model_class: type[models.Model]):
+        """
+        Inject cache invalidation methods into the model class.
+
+        This method safely wraps the model's save() and delete() methods with cache invalidation
+        logic, eliminating the need to manually inherit from Model mixin.
+        """
+        # Check if we've already injected to avoid duplicate wrapping
+        if hasattr(model_class, "_cache_me_invalidation_injected"):
+            return
+
+        # Store original methods
+        original_save = model_class.save
+        original_delete = model_class.delete
+
+        def save_with_invalidation(self, *args, **kwargs):
+            """Save method wrapped with cache invalidation."""
+            result = original_save(self, *args, **kwargs)
+            # Invalidate cache after successful save
+            invalidate_model_cache(self.__class__)
+            return result
+
+        def delete_with_invalidation(self, *args, **kwargs):
+            """Delete method wrapped with cache invalidation."""
+            result = original_delete(self, *args, **kwargs)
+            # Invalidate cache after successful delete
+            invalidate_model_cache(self.__class__)
+            return result
+
+        def invalidate_cache_classmethod(cls, invalidate_all=False):
+            """
+            Class method to manually invalidate cache for this model.
+
+            Args:
+                cls: The model class to invalidate cache for.
+                invalidate_all (bool): If True, also invalidates permanent cache.
+                                     If False, only invalidates regular cache.
+
+            """
+            invalidate_model_cache(cls, invalidate_permanent=invalidate_all)
+
+        # Replace the methods with wrapped versions
+        model_class.save = save_with_invalidation
+        model_class.delete = delete_with_invalidation
+
+        # Add class method for manual cache invalidation
+        model_class.invalidate_cache = classmethod(invalidate_cache_classmethod)
+
+        # Mark that we've injected the functionality
+        model_class._cache_me_invalidation_injected = True
 
     def get_options(self, model_class: type[models.Model]) -> CacheMeOptions:
         """Get caching options for a model."""

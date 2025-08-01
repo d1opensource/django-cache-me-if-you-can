@@ -5,12 +5,19 @@ A powerful Django library for intelligent queryset caching with automatic invali
 ## Features
 
 ✨ **Smart Queryset Caching** - Automatically cache Django querysets based on SQL queries
+
 🔄 **Automatic Cache Invalidation** - Clear cache when models are saved, updated, or deleted
+
 🏛️ **Permanent Cache** - Cache that persists through model changes until timeout
+
 🎯 **Granular Control** - Configure caching per model with flexible options
+
 🐛 **Debug Mode** - Comprehensive logging for cache hits, misses, and invalidations
+
 🚀 **Zero Configuration** - Works out of the box with sensible defaults
+
 🔧 **Multiple Cache Backends** - Supports Redis, Memcached, and database cache
+
 📈 **Performance Focused** - Minimal overhead with maximum speed gains
 
 ## Quick Start
