@@ -59,19 +59,14 @@ DJANGO_CACHE_ME_ON = True  # Enable/disable caching globally
 ```python
 # myapp/cache_me.py
 from django_cache_me import cache_me_register, CacheMeOptions
-from .models import User, Product
+from .models import Product
 
-@cache_me_register(User)
-class UserCacheMeOptions(CacheMeOptions):
-    cache_table = True      # Cache .all() queries
-    cache_queryset = True   # Cache filtered queries
-    timeout = 300          # 5 minutes
 
 @cache_me_register(Product)
 class ProductCacheMeOptions(CacheMeOptions):
-    cache_table = False     # Don't cache .all()
-    cache_queryset = True   # Cache filtered queries only
-    timeout = 1800         # 30 minutes
+    cache_table = True     # Cache .all() (entire table, it must be used with caution) -> Default False
+    cache_queryset = True   # Cache filtered queries only -> Default True
+    timeout = 1800         # Override default timeout to 30 minutes
 ```
 
 That's it! Your models now have intelligent caching.
@@ -82,43 +77,43 @@ That's it! Your models now have intelligent caching.
 
 ```python
 # These queries are automatically cached
-users = User.objects.all()                    # Cached (if cache_table=True)
-active_users = User.objects.filter(is_active=True)  # Cached
 recent_products = Product.objects.filter(
     created_at__gte=timezone.now() - timedelta(days=7)
 )  # Cached
 
 # Cache is automatically invalidated when data changes
-user = User.objects.get(id=1)
+user = Product.objects.get(id=1)
 user.name = "New Name"
 user.save()  # Cache for User model is cleared
 ```
 
 ### Permanent Cache
 
-Use permanent cache for data that shouldn't be invalidated on model changes:
+Use permanent cache for data that shouldn't be invalidated on model changes. This is helpful for small querysets that require to be run over and over again like within chained processes.
 
 ```python
 # Permanent cache - survives model saves/updates
-static_users = User.objects.permanent_cache.filter(role='admin')
-config_data = Config.objects.permanent_cache.all()
+hair_products = Product.objects.permanent_cache.filter(category__name='hair')
 
-# Only cleared by timeout or explicit invalidation
-User.objects.invalidate_cache(invalidate_all=True)  # Clears permanent cache too
+hair_product = Product.objects.get(name='Shampoo')
+hair_product.name = "New Shampoo Name"
+hair_product.save()  # Cache for Product model is cleared, but permanent cache remains
+
+Product.objects.invalidate_cache(invalidate_all=True)  # Clears permanent cache too
 ```
 
 ### Manual Cache Control
 
 ```python
 # Bypass cache entirely
-fresh_users = User.objects.no_cache.filter(is_active=True)
+active_products = Product.objects.no_cache.filter(is_active=True)
 
 # Manual cache invalidation
-User.objects.invalidate_cache()                    # Clear regular cache only
-User.objects.invalidate_cache(invalidate_all=True) # Clear all cache (including permanent)
+Product.objects.invalidate_cache()                    # Clear regular cache only
+Product.objects.invalidate_cache(invalidate_all=True) # Clear all cache (including permanent)
 
 # From queryset
-User.objects.filter(name="test").invalidate_cache()
+Product.objects.filter(name="test").invalidate_cache()
 ```
 
 ## Configuration Options
@@ -171,27 +166,27 @@ Cache is automatically cleared when:
 
 ```python
 # Individual operations
-user.save()                    # Clears User cache
-user.delete()                  # Clears User cache
+Product.save()                    # Clears Product cache
+Product.delete()                  # Clears Product cache
 
 # Bulk operations  
-User.objects.bulk_create([...])           # Clears User cache
-User.objects.bulk_update([...], ['name']) # Clears User cache
-User.objects.filter(...).update(...)      # Clears User cache
-User.objects.filter(...).delete()         # Clears User cache
+Product.objects.bulk_create([...])           # Clears Product cache
+Product.objects.bulk_update([...], ['name']) # Clears Product cache
+Product.objects.filter(...).update(...)      # Clears Product cache
+Product.objects.filter(...).delete()         # Clears Product cache
 ```
 
 ### Manual Invalidation
 
 ```python
 # Clear all cache for a model
-User.objects.invalidate_cache()
+Product.objects.invalidate_cache()
 
 # Clear all cache including permanent cache
-User.objects.invalidate_cache(invalidate_all=True)
+Product.objects.invalidate_cache(invalidate_all=True)
 
 # From a queryset
-User.objects.filter(is_active=True).invalidate_cache()
+Product.objects.filter(is_active=True).invalidate_cache()
 ```
 
 ## Debug Mode
@@ -205,10 +200,10 @@ DJANGO_CACHE_ME_DEBUG_MODE = True
 
 Output examples:
 ```
-[django-cache-me] Cache miss for key 'cache_me:queryset:myapp.user:a1b2c3d4' - hitting database
-[django-cache-me] Cached queryset with key 'cache_me:queryset:myapp.user:a1b2c3d4' for 300 seconds
-[django-cache-me] Cache invalidated for model 'myapp.user' (regular cache)
-[django-cache-me] Cache invalidated for model 'myapp.user' (permanent and regular cache)
+[django-cache-me] Cache miss for key 'cache_me:queryset:myapp.product:a1b2c3d4' - hitting database
+[django-cache-me] Cached queryset with key 'cache_me:queryset:myapp.product:a1b2c3d4' for 300 seconds
+[django-cache-me] Cache invalidated for model 'myapp.product' (regular cache)
+[django-cache-me] Cache invalidated for model 'myapp.product' (permanent and regular cache)
 ```
 
 ## Advanced Usage
@@ -218,18 +213,18 @@ Output examples:
 The library works with custom managers through mixin inheritance:
 
 ```python
-class CustomUserManager(models.Manager):
-    def active_users(self):
+class CustomProductManager(models.Manager):
+    def active_products(self):
         return self.filter(is_active=True)
 
-class User(models.Model):
-    objects = CustomUserManager()
+class Product(models.Model):
+    objects = CustomProductManager()
     # ... fields
 
 # After registration, you get both:
-User.objects.active_users()              # Custom method
-User.objects.filter(...).cache()         # Caching capabilities
-User.objects.no_cache.active_users()     # Bypass cache
+Product.objects.active_users()              # Custom method
+Product.objects.filter(...).cache()         # Caching capabilities
+Product.objects.no_cache.active_users()     # Bypass cache
 ```
 
 ### Cache Keys
@@ -242,22 +237,9 @@ The library generates cache keys based on:
 Key patterns:
 ```
 cache_me:table:myapp.user                           # Table cache
-cache_me:queryset:myapp.user:md5hash                # Queryset cache  
-cache_me:permanent_table:myapp.user                 # Permanent table cache
-cache_me:permanent_queryset:myapp.user:md5hash      # Permanent queryset cache
-```
-
-### Using with Django Rest Framework
-
-```python
-# views.py
-from rest_framework.decorators import api_view
-from django_cache_me.decorators import cache_queryset
-
-@api_view(['GET'])
-@cache_queryset(timeout=600)
-def get_users(request):
-    return User.objects.filter(is_active=True)
+cache_me:queryset:myapp.table:md5hash                # Queryset cache  
+cache_me:permanent_table:myapp.table                 # Permanent table cache
+cache_me:permanent_queryset:myapp.table:md5hash      # Permanent queryset cache
 ```
 
 ### Cache Invalidation Mixin
@@ -267,7 +249,7 @@ For models that need custom invalidation logic:
 ```python
 from django_cache_me.signals import CacheInvalidationMixin
 
-class User(models.Model, CacheInvalidationMixin):
+class Product(models.Model, CacheInvalidationMixin):
     name = models.CharField(max_length=100)
     # Cache automatically invalidated on save/delete
 ```
@@ -316,7 +298,7 @@ from django_cache_me.registry import cache_me_registry
 print(cache_me_registry.get_registered_models())
 
 # Check model options
-options = cache_me_registry.get_options(User)
+options = cache_me_registry.get_options(Product)
 print(f"Table cache: {options.cache_table}")
 print(f"Queryset cache: {options.cache_queryset}")
 ```
