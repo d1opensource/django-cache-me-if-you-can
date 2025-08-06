@@ -12,6 +12,7 @@ from django_cache_me.registry import (
     CachedQuerySet,
     CacheMeOptions,
     CacheMeRegistry,
+    PermanentCachedQuerySet,
     cache_me_register,
     cache_me_registry,
 )
@@ -385,9 +386,9 @@ class TestCachedQuerySet(TestCase):
 
     def test_generate_cache_key_table_type_permanent(self):
         """Test _generate_cache_key for table type with permanent flag."""
-        queryset = CachedQuerySet(TestModel)
+        queryset = PermanentCachedQuerySet(TestModel)
 
-        key = queryset._generate_cache_key(query_type="table", permanent=True)
+        key = queryset._generate_cache_key(query_type="table")
         self.assertIn("cache_me:permanent:", key)
         self.assertIn("django_cache_me.testmodel", key)
 

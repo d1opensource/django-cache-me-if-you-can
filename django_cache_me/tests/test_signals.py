@@ -155,8 +155,8 @@ class TestCacheInvalidationSignals(TestCase):
         except Exception as e:
             self.fail(f"invalidate_model_cache should not raise exception in debug mode: {e}")
 
-    @patch("django_cache_me.signals.cache")
-    def test_cache_deletion_patterns(self, mock_cache):
+    @patch("django.core.cache.caches")
+    def test_cache_deletion_patterns(self, mock_caches):
         """Test cache deletion patterns."""
 
         # Register the model
@@ -169,16 +169,17 @@ class TestCacheInvalidationSignals(TestCase):
             del cache_me_registry._registry[TestModel]
         cache_me_registry.register(TestModel, TestOptions)
 
+        # Mock the cache instance
+        mock_cache = MagicMock()
+        mock_caches.__getitem__.return_value = mock_cache
+
         # Mock cache methods
         mock_cache.delete = MagicMock()
         mock_cache.delete_pattern = MagicMock()
-        mock_cache.keys = MagicMock(
-            return_value=[
-                f"cache_me:queryset:{TestModel._meta.app_label}.{TestModel._meta.model_name}:key1",
-                f"cache_me:permanent:{TestModel._meta.app_label}.{TestModel._meta.model_name}:key2",
-                "other_cache_key",
-            ]
-        )
+        mock_cache.__class__.__name__ = "MockCache"
+
+        # Make sure it's not detected as DummyCache
+        mock_cache.__class__ = MagicMock()
 
         invalidate_model_cache(TestModel)
 
