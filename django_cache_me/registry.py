@@ -5,7 +5,14 @@ from django.core.cache import cache
 from django.db import models
 from django.db.models.query import QuerySet
 
-from .settings import cache_hit_log, cache_miss_log, cache_retrieval_log, empty_queryset_log, is_cache_enabled
+from .settings import (
+    cache_disabled,
+    cache_hit_log,
+    cache_miss_log,
+    cache_retrieval_log,
+    empty_queryset_log,
+    is_cache_enabled,
+)
 from .signals import invalidate_model_cache
 
 
@@ -21,23 +28,30 @@ class CachedQuerySet(QuerySet):
         """Get caching options for this model."""
         return cache_me_registry.get_options(self.model)
 
-    def _generate_cache_key(self, query_type="queryset", permanent=None):
+    @property
+    def is_permanent_cache(self):
+        """Check if this queryset uses permanent caching."""
+        return self._is_permanent_cache
+
+    def _generate_cache_key(self, query_type="queryset"):
         """Generate cache key based on query."""
         model_name = f"{self.model._meta.app_label}.{self.model._meta.model_name}"
 
-        # Check if this is a permanent cache queryset
-        if permanent is None:
-            permanent = getattr(self, "_is_permanent_cache", False)
-
         if query_type == "table":
             # For .all() when cache_table=True
-            cache_type = "permanent" if permanent else "table"
+            cache_type = "permanent" if self.is_permanent_cache else "table"
             return f"cache_me:{cache_type}:{model_name}"
 
         # For complex querysets - hash the SQL query
-        query_str = str(self.query)
+        try:
+            query_str = str(self.query)
+        except Exception:
+            # Handle cases where query compilation fails (e.g., EmptyResultSet)
+            # Use a fallback cache key based on the query object's attributes
+            query_str = f"query_id_{id(self.query)}"
+
         query_hash = hashlib.md5(query_str.encode("utf-8")).hexdigest()
-        cache_type = "permanent" if permanent else "queryset"
+        cache_type = "permanent" if self.is_permanent_cache else "queryset"
         return f"cache_me:{cache_type}:{model_name}:{query_hash}"
 
     def _get_timeout(self):
@@ -71,12 +85,8 @@ class CachedQuerySet(QuerySet):
 
     def _cache_queryset(self):
         """Cache the queryset results."""
-        # Check if caching is globally disabled
-        if not is_cache_enabled():
-            cache_miss_log("GLOBAL_DISABLED")
-            return list(super().iterator())
-
-        if not self._use_cache:
+        if not self._use_cache or not is_cache_enabled():
+            cache_disabled()
             return list(super().iterator())
 
         options = self._get_cache_options()
@@ -213,10 +223,20 @@ class CachedQuerySet(QuerySet):
 
     def delete(self):
         """Override delete to invalidate cache after bulk deletes."""
-        result = super().delete()
-        # Invalidate cache after delete
-        self._invalidate_cache()
-        return result
+        # For delete operations, we need to bypass caching to avoid EmptyResultSet issues
+        # Create a non-cached version of this queryset for the actual delete operation
+        non_cached_qs = super(CachedQuerySet, self)._clone()  # noqa: UP008
+        non_cached_qs.__class__ = QuerySet  # Use Django's base QuerySet class
+
+        try:
+            result = non_cached_qs.delete()
+            # Invalidate cache after successful delete
+            self._invalidate_cache()
+        except Exception:
+            pass
+            # If delete fails, don't invalidate cache
+        else:
+            return result
 
     def _invalidate_cache(self):
         """Helper method to invalidate cache for this model."""
@@ -248,7 +268,7 @@ class PermanentCachedQuerySet(CachedQuerySet):
         """Cache the queryset results with permanent cache keys."""
         # Check if caching is globally disabled
         if not is_cache_enabled():
-            cache_miss_log("GLOBAL_DISABLED")
+            cache_disabled()
             return list(super(CachedQuerySet, self).iterator())
 
         if not self._use_cache:
@@ -267,15 +287,15 @@ class PermanentCachedQuerySet(CachedQuerySet):
         if is_all_query and self._should_cache_all():
             # Cache .all() when cache_table=True
             should_cache = True
-            cache_key = self._generate_cache_key("table", permanent=True)
+            cache_key = self._generate_cache_key("table")
         elif not is_all_query and self._should_cache_queryset():
             # Cache filtered queries when cache_queryset=True
             should_cache = True
-            cache_key = self._generate_cache_key("queryset", permanent=True)
+            cache_key = self._generate_cache_key("queryset")
         elif is_all_query and self._should_cache_queryset() and not self._should_cache_all():
             # Cache .all() when cache_queryset=True but cache_table=False
             should_cache = True
-            cache_key = self._generate_cache_key("queryset", permanent=True)
+            cache_key = self._generate_cache_key("queryset")
 
         if not should_cache:
             return list(super(CachedQuerySet, self).iterator())
@@ -457,6 +477,12 @@ class CachedManager(models.Manager):
         self._invalidate_cache()
         return result
 
+    def bulk_delete(self, objs, fields, batch_size=None):
+        result = super().bulk_update(objs, fields, batch_size=batch_size)
+        # Invalidate cache after bulk delete
+        self._invalidate_cache()
+        return result
+
     def bulk_update(self, objs, fields, batch_size=None):
         """Override bulk_update to invalidate cache after bulk operations."""
         result = super().bulk_update(objs, fields, batch_size=batch_size)
@@ -485,9 +511,13 @@ class CacheMeRegistry:
 
     def __init__(self):
         self._registry: dict[type[models.Model], CacheMeOptions] = {}
+        self._cache = cache
 
     def register(self, model_class: type[models.Model], options_class: type[CacheMeOptions] | None = None):
         """Register a model with caching options."""
+        if not is_cache_enabled():
+            cache_disabled()
+            return
         if options_class is None:
             options_class = CacheMeOptions
 
