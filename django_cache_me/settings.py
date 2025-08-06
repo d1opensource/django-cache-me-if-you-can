@@ -46,17 +46,26 @@ def cache_miss_log(cache_key):
     debug_log("Cache miss for key '%s' - hitting database", cache_key)
 
 
+def cache_disabled():
+    """Log when cache is missed and query hits database."""
+    debug_log("Cache Me is disabled.")
+
+
 def cache_retrieval_log(cache_key):
     """Log when data is retrieved from cache."""
     debug_log("Retrieving data from key '%s' from cache", cache_key)
 
 
 def empty_queryset_log(cache_key):
-    """Log when a cached queryset is empty."""
+    """Log when a queryset is empty and won't be cached."""
     debug_log("'%s' resulted in an empty queryset. Nothing will be cached.", cache_key)
 
 
-def cache_invalidation_log(model_name, permanent=False):
+def cache_invalidation_log(cache_key):
     """Log when cache is invalidated."""
-    cache_type = "permanent and regular" if permanent else "regular"
-    debug_log("Cache invalidated for model '%s' (%s cache)", model_name, cache_type)
+    debug_log("'%s' invalidated.", cache_key)
+
+
+def cache_generic_message(message):
+    """Log a generic cache-related message."""
+    debug_log("%s", message)
