@@ -2,7 +2,7 @@
 
 # Import main components for easy access
 from .registry import CacheMeOptions, cache_me_register, cache_me_registry
-from .signals import invalidate_all_caches
+from .signals import invalidate_all_caches, invalidate_model_cache
 
 __version__ = "0.1.0"
 __author__ = "Marcelo Moraes"
@@ -15,4 +15,5 @@ __all__ = [
     "cache_me_register",
     "cache_me_registry",
     "invalidate_all_caches",
+    "invalidate_model_cache",
 ]
