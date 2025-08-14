@@ -1,7 +1,11 @@
-from django.core.cache.backends.dummy import DummyCache
-from django.db.models.signals import post_delete, post_save
+from contextlib import suppress
 
-from .settings import cache_disabled, cache_generic_message, cache_invalidation_log, is_cache_enabled
+from django.core.cache.backends.dummy import DummyCache
+from django.db import transaction
+from django.db.models.signals import post_delete, post_save
+from django.utils.module_loading import import_string
+
+from .settings import cache_disabled, cache_generic_message, cache_invalidation_log, get_setting, is_cache_enabled
 
 
 def invalidate_model_cache(model_class, invalidate_permanent=False):
@@ -55,9 +59,105 @@ def invalidate_model_cache(model_class, invalidate_permanent=False):
         _delete_cache_keys_by_pattern(permanent_queryset_pattern, current_cache=current_cache)
 
 
+def _run_warmers_for_model(model_class):
+    """
+    Optionally pre-warm cache for a model after invalidation.
+
+    Obeys settings:
+    - DJANGO_CACHE_ME_WARMERS: mapping of "app_label.ModelName" -> list of dotted callables
+      that return QuerySet(s) to be evaluated.
+    - If the registered options have cache_table=True, evaluates objects.all().
+    """
+    try:
+        from .registry import cache_me_registry
+
+        options = cache_me_registry.get_options(model_class)
+    except Exception:
+        options = None
+
+    # Warm the table cache if configured
+    try:
+        if options and getattr(options, "cache_table", False):
+            list(model_class.objects.all())
+    except Exception as e:  # pragma: no cover - defensive logging only
+        cache_generic_message(f"Error warming table cache for {model_class}: {e}")
+
+    # Run custom warmers
+    warmers_map = get_setting("DJANGO_CACHE_ME_WARMERS", {}) or {}
+    key = f"{model_class._meta.app_label}.{model_class.__name__}"
+    warmer_paths = warmers_map.get(key, [])
+    for path in warmer_paths:
+        try:
+            func = import_string(path)
+            qs = func()
+            # If it returns a queryset or iterable, evaluate to trigger caching
+            with suppress(TypeError):
+                list(qs)
+        except Exception as e:  # pragma: no cover - defensive logging only
+            cache_generic_message(f"Warmer '{path}' failed: {e}")
+
+
+def schedule_invalidation(model_class, invalidate_permanent=False, warm=None):
+    """
+    Schedule (or execute) cache invalidation for a model.
+
+    When DJANGO_CACHE_ME_ASYNC_ENABLED is True, will try to enqueue a Celery task.
+    Falls back to synchronous invalidation if Celery is unavailable or enqueue fails.
+
+    Args:
+        model_class: The model class to invalidate.
+        invalidate_permanent: If True, also invalidates permanent cache.
+        warm: Optional boolean. If None, uses DJANGO_CACHE_ME_WARM_ON_INVALIDATE.
+
+    """
+    if not is_cache_enabled():
+        cache_disabled()
+        return
+
+    if warm is None:
+        warm = bool(get_setting("DJANGO_CACHE_ME_WARM_ON_INVALIDATE", False))
+
+    async_enabled = bool(get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False))
+    on_commit = bool(get_setting("DJANGO_CACHE_ME_ASYNC_ON_COMMIT", True))
+
+    def _sync_path():
+        invalidate_model_cache(model_class, invalidate_permanent=invalidate_permanent)
+        if warm:
+            _run_warmers_for_model(model_class)
+
+    if not async_enabled:
+        _sync_path()
+        return
+
+    def enqueue():
+        try:
+            # Import lazily to avoid hard dependency and circular imports
+            from .tasks import invalidate_model_cache_task
+
+            app_label = model_class._meta.app_label
+            model_name = model_class.__name__
+            queue = get_setting("DJANGO_CACHE_ME_CELERY_QUEUE", None)
+            apply_kwargs = {"queue": queue} if queue else {}
+            # In tests without Celery, our task decorator shim provides .delay
+            invalidate_model_cache_task.delay(app_label, model_name, invalidate_permanent, warm, **apply_kwargs)
+        except Exception as e:
+            cache_generic_message(f"Async enqueue failed, falling back to sync: {e}")
+            _sync_path()
+
+    if on_commit:
+        try:
+            transaction.on_commit(enqueue)
+        except Exception:
+            enqueue()
+    else:
+        enqueue()
+
+
 def auto_invalidate_cache(sender, **kwargs):
     """Signal handler to automatically invalidate cache when models are saved/deleted."""
-    invalidate_model_cache(sender)
+    if sender is None:
+        return
+    schedule_invalidation(sender)
 
 
 def enable_auto_invalidation(model_class):
@@ -118,7 +218,8 @@ def invalidate_all_caches(invalidate_permanent=False):
 
     for model_class in registered_models:
         try:
-            invalidate_model_cache(model_class, invalidate_permanent=invalidate_permanent)
+            # Go through the scheduler so async mode can be honored
+            schedule_invalidation(model_class, invalidate_permanent=invalidate_permanent)
         except Exception as e:
             # Log the error but continue with other models
             cache_generic_message(f"Error invalidating cache for {model_class}: {e}")

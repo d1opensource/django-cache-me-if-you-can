@@ -20,6 +20,8 @@ A powerful Django library for intelligent queryset caching with automatic invali
 
 📈 **Performance Focused** - Minimal overhead with maximum speed gains
 
+⚙️ **Optional Async Invalidation** - Offload cache invalidation to Celery with on-commit scheduling and optional pre-warming
+
 ## Quick Start
 
 ### Installation
@@ -134,10 +136,27 @@ Product.objects.filter(name="test").invalidate_cache()
 DJANGO_CACHE_ME_ON = True
 
 # Enable debug logging (default: False)
-DJANGO_CACHE_ME_DEBUG_MODE = True
+DJANGO_CACHE_ME_DEBUG_MODE = False
 
 # Default cache timeout in seconds (default: 300)
-DJANGO_CACHE_ME_TIMEOUT = 600
+DJANGO_CACHE_ME_TIMEOUT = 300
+
+# Optional async invalidation via Celery (all default to disabled/safe)
+# Enable background invalidation (default: False)
+DJANGO_CACHE_ME_ASYNC_ENABLED = False
+
+# Enqueue after successful DB commit (default: True)
+DJANGO_CACHE_ME_ASYNC_ON_COMMIT = True
+
+# Optional Celery queue routing (default: None)
+DJANGO_CACHE_ME_CELERY_QUEUE = None
+
+# Pre-warm cache after invalidation (default: False)
+DJANGO_CACHE_ME_WARM_ON_INVALIDATE = False
+
+# Optional per-model warmers mapping (default: {})
+# Format: {"app_label.ModelName": ["dotted.path.to.callable", ...]}
+DJANGO_CACHE_ME_WARMERS = {}
 ```
 
 ### Per-Model Configuration
@@ -149,7 +168,7 @@ class MyModelCacheMeOptions(CacheMeOptions):
     # Cache entire table when .all() is called (default: False)
     cache_table = True
 
-    # Cache querysets with filters/annotations (default: False)
+    # Cache querysets with filters/annotations (default: True)
     cache_queryset = True
 
     # Custom timeout for this model (default: uses DJANGO_CACHE_ME_TIMEOUT)
@@ -195,6 +214,49 @@ Product.objects.invalidate_cache(invalidate_all=True)
 # From a queryset
 Product.objects.filter(is_active=True).invalidate_cache()
 ```
+
+## Async Invalidation (optional)
+
+You can offload cache invalidation to a Celery worker to keep write paths snappy.
+
+- Toggle on with settings (safe defaults keep current sync behavior):
+
+```python
+DJANGO_CACHE_ME_ASYNC_ENABLED = True
+DJANGO_CACHE_ME_ASYNC_ON_COMMIT = True          # recommend enqueuing after commit
+DJANGO_CACHE_ME_CELERY_QUEUE = "cache_me"       # optional, route to a specific queue
+DJANGO_CACHE_ME_WARM_ON_INVALIDATE = True       # optional, pre-warm cache
+```
+
+- Warmers: configure per-model callables to evaluate and populate cache after invalidation.
+
+```python
+# settings.py
+DJANGO_CACHE_ME_WARMERS = {
+    "myapp.Product": [
+        "myapp.cache_warmers.product_all",           # returns a QuerySet
+        "myapp.cache_warmers.product_popular_filters",
+    ]
+}
+```
+
+Example warmer:
+
+```python
+# myapp/cache_warmers.py
+from .models import Product
+
+def product_all():
+    return Product.objects.all()  # evaluating this warms the table cache if enabled
+
+def product_popular_filters():
+    return Product.objects.filter(is_active=True)
+```
+
+Behavior and fallbacks:
+- If Celery is available, we enqueue invalidate_model_cache_task; if not, we gracefully run synchronously.
+- When DJANGO_CACHE_ME_ASYNC_ON_COMMIT is True, we enqueue only after the DB transaction commits.
+- Warmers run only when DJANGO_CACHE_ME_WARM_ON_INVALIDATE is True (and for table warm-up, when the model has cache_table=True).
 
 ## Debug Mode
 
@@ -269,6 +331,7 @@ class Product(models.Model, CacheMeInvalidationMixin):
 3. **Use Redis** for best performance with pattern-based key deletion
 4. **Monitor cache hit rates** in debug mode during development
 5. **Set appropriate timeouts** based on data change frequency
+6. **Enable async invalidation** in write-heavy flows to keep responses fast
 
 ## Cache Backend Compatibility
 
@@ -293,6 +356,11 @@ class Product(models.Model, CacheMeInvalidationMixin):
 - Check if using custom save methods that bypass signals
 - Use manual invalidation for custom update logic
 
+**Async invalidation not enqueuing:**
+- Ensure `DJANGO_CACHE_ME_ASYNC_ENABLED = True`
+- Make sure Celery is running if you expect background execution
+- With no Celery, invalidation falls back to sync (by design)
+
 **Performance issues:**
 - Enable debug mode to check cache hit rates
 - Consider using permanent cache for static data
@@ -316,6 +384,7 @@ print(f"Queryset cache: {options.cache_queryset}")
 - Django 3.2+
 - Python 3.8+
 - A configured cache backend (Redis recommended)
+- Optional: Celery if you want background invalidation (the library runs without it)
 
 ## Contributing
 

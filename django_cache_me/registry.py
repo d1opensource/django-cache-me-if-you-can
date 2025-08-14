@@ -11,9 +11,10 @@ from .settings import (
     cache_miss_log,
     cache_retrieval_log,
     empty_queryset_log,
+    get_setting,
     is_cache_enabled,
 )
-from .signals import invalidate_model_cache
+from .signals import invalidate_model_cache, schedule_invalidation
 
 
 class CachedQuerySet(QuerySet):
@@ -240,7 +241,10 @@ class CachedQuerySet(QuerySet):
 
     def _invalidate_cache(self):
         """Helper method to invalidate cache for this model."""
-        invalidate_model_cache(self.model)
+        if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
+            schedule_invalidation(self.model)
+        else:
+            invalidate_model_cache(self.model)
 
     def invalidate_cache(self, invalidate_all=False):
         """
@@ -251,7 +255,10 @@ class CachedQuerySet(QuerySet):
                                  If False, only invalidates regular cache.
 
         """
-        invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
+        if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
+            schedule_invalidation(self.model, invalidate_permanent=invalidate_all)
+        else:
+            invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
 
 
 class PermanentCachedQuerySet(CachedQuerySet):
@@ -453,7 +460,10 @@ class CachedManager(models.Manager):
                                  If False, only invalidates regular cache.
 
         """
-        invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
+        if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
+            schedule_invalidation(self.model, invalidate_permanent=invalidate_all)
+        else:
+            invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
 
     def bulk_create(
         self,
@@ -492,7 +502,10 @@ class CachedManager(models.Manager):
 
     def _invalidate_cache(self):
         """Helper method to invalidate cache for this model."""
-        invalidate_model_cache(self.model)
+        if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
+            schedule_invalidation(self.model)
+        else:
+            invalidate_model_cache(self.model)
 
 
 class CacheMeOptions:  # noqa: B903
@@ -640,14 +653,20 @@ class CacheMeRegistry:
             """Save method wrapped with cache invalidation."""
             result = original_save(self, *args, **kwargs)
             # Invalidate cache after successful save
-            invalidate_model_cache(self.__class__)
+            if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
+                schedule_invalidation(self.__class__)
+            else:
+                invalidate_model_cache(self.__class__)
             return result
 
         def delete_with_invalidation(self, *args, **kwargs):
             """Delete method wrapped with cache invalidation."""
             result = original_delete(self, *args, **kwargs)
             # Invalidate cache after successful delete
-            invalidate_model_cache(self.__class__)
+            if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
+                schedule_invalidation(self.__class__)
+            else:
+                invalidate_model_cache(self.__class__)
             return result
 
         def invalidate_cache_classmethod(cls, invalidate_all=False):
@@ -660,7 +679,10 @@ class CacheMeRegistry:
                                      If False, only invalidates regular cache.
 
             """
-            invalidate_model_cache(cls, invalidate_permanent=invalidate_all)
+            if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
+                schedule_invalidation(cls, invalidate_permanent=invalidate_all)
+            else:
+                invalidate_model_cache(cls, invalidate_permanent=invalidate_all)
 
         # Replace the methods with wrapped versions
         model_class.save = save_with_invalidation

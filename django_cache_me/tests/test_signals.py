@@ -3,14 +3,16 @@
 from unittest.mock import MagicMock, patch
 
 from django.core.cache import cache
-from django.db import models
-from django.test import TestCase, override_settings
+from django.db import models, transaction
+from django.test import TestCase, TransactionTestCase, override_settings
 
 from django_cache_me.registry import CacheMeOptions, cache_me_registry
 from django_cache_me.signals import (
     auto_invalidate_cache,
     enable_auto_invalidation,
+    invalidate_all_caches,
     invalidate_model_cache,
+    schedule_invalidation,
     setup_cache_invalidation,
 )
 
@@ -217,3 +219,64 @@ class TestCacheInvalidationSignals(TestCase):
             invalidate_model_cache(TestModel)
         except Exception as e:
             self.fail(f"invalidate_model_cache should work with registered model: {e}")
+
+    @override_settings(DJANGO_CACHE_ME_ASYNC_ENABLED=False, DJANGO_CACHE_ME_ASYNC_ON_COMMIT=False)
+    def test_schedule_invalidation_sync_calls_invalidate_and_warmers(self):
+        """schedule_invalidation should call invalidate_model_cache and warmers in sync mode."""
+        with (
+            patch("django_cache_me.signals.invalidate_model_cache") as mock_inv,
+            patch("django_cache_me.signals._run_warmers_for_model") as mock_warm,
+        ):
+            schedule_invalidation(TestModel, invalidate_permanent=True, warm=True)
+            mock_inv.assert_called_once_with(TestModel, invalidate_permanent=True)
+            mock_warm.assert_called_once_with(TestModel)
+
+    @override_settings(DJANGO_CACHE_ME_ASYNC_ENABLED=True, DJANGO_CACHE_ME_ASYNC_ON_COMMIT=False)
+    def test_schedule_invalidation_async_fallback_to_sync_on_error(self):
+        """If enqueue fails, scheduler should fall back to sync invalidation."""
+        with (
+            patch("django_cache_me.tasks.invalidate_model_cache_task.delay", side_effect=RuntimeError("boom")),
+            patch("django_cache_me.signals.invalidate_model_cache") as mock_inv,
+        ):
+            schedule_invalidation(TestModel, invalidate_permanent=True, warm=False)
+            mock_inv.assert_called_once_with(TestModel, invalidate_permanent=True)
+
+    @override_settings(DJANGO_CACHE_ME_ASYNC_ENABLED=True)
+    def test_invalidate_all_caches_uses_scheduler(self):
+        """invalidate_all_caches should go through the scheduler in async mode."""
+
+        # Register a dummy model so the helper has something to process
+        class TestOptions(CacheMeOptions):
+            def __init__(self, model_class):
+                super().__init__(model_class)
+                self.cache_table = True
+
+        if TestModel in cache_me_registry._registry:
+            del cache_me_registry._registry[TestModel]
+        cache_me_registry.register(TestModel, TestOptions)
+
+        with (
+            patch("django_cache_me.signals.schedule_invalidation") as mock_sched,
+            patch("django_cache_me.registry.cache_me_registry.get_registered_models", return_value=[TestModel]),
+        ):
+            invalidate_all_caches(invalidate_permanent=False)
+            # Should attempt to schedule for the single registered model
+            mock_sched.assert_called_once_with(TestModel, invalidate_permanent=False)
+
+
+class TestCacheInvalidationSignalsTransactional(TransactionTestCase):
+    """Transactional tests for commit hooks."""
+
+    reset_sequences = True
+
+    @override_settings(DJANGO_CACHE_ME_ASYNC_ENABLED=True, DJANGO_CACHE_ME_ASYNC_ON_COMMIT=True)
+    def test_schedule_invalidation_async_on_commit(self):
+        """When on_commit is enabled, enqueue should be called after commit in a real transaction."""
+        with patch("django_cache_me.tasks.invalidate_model_cache_task.delay") as mock_delay:
+            # Use an atomic block to trigger on_commit
+            with transaction.atomic():
+                schedule_invalidation(TestModel, invalidate_permanent=False, warm=False)
+                # Not yet called inside the transaction
+                assert mock_delay.call_count == 0
+            # After exiting atomic block (innermost and outermost), on_commit runs in TransactionTestCase
+            assert mock_delay.call_count == 1
