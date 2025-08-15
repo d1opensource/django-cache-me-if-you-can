@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import suppress
 
 from django.conf import settings
 from django.core.cache import cache
@@ -409,6 +410,23 @@ class CachedManager(models.Manager):
                                         original_qs = self._original_queryset_class(self.model, using=self._db)
                                         # Copy our query state
                                         original_qs.query = self.query.clone()
+                                        # Also propagate iterable configuration/state for correct semantics
+                                        for attr in (
+                                            "_iterable_class",
+                                            "_fields",
+                                            "_sticky_filter",
+                                            "_for_write",
+                                            "_prefetch_related_lookups",
+                                            "_known_related_objects",
+                                            "_hints",
+                                            "_db",
+                                            "_annotations",
+                                            "_named_annotations",
+                                            "_defer_next_filter",
+                                        ):
+                                            if hasattr(self, attr):
+                                                with suppress(Exception):
+                                                    setattr(original_qs, attr, getattr(self, attr))
                                         # Call the original method
                                         result = original_method(original_qs, *args, **kwargs)
                                         # If the result is a QuerySet, wrap it back in our cached version
@@ -419,6 +437,23 @@ class CachedManager(models.Manager):
                                             cached_result._is_permanent_cache = getattr(
                                                 self, "_is_permanent_cache", False
                                             )
+                                            # Preserve Django queryset internals that affect iteration/shape
+                                            for attr in (
+                                                "_iterable_class",
+                                                "_fields",
+                                                "_sticky_filter",
+                                                "_for_write",
+                                                "_prefetch_related_lookups",
+                                                "_known_related_objects",
+                                                "_hints",
+                                                "_db",
+                                                "_annotations",
+                                                "_named_annotations",
+                                                "_defer_next_filter",
+                                            ):
+                                                if hasattr(result, attr):
+                                                    with suppress(Exception):
+                                                        setattr(cached_result, attr, getattr(result, attr))
                                             return cached_result
                                         return result
 
