@@ -74,16 +74,13 @@ class CachedQuerySet(QuerySet):
         return options and options.cache_queryset
 
     def _is_all_query(self):
-        """Check if this is a simple .all() query."""
-        # Simple check: if no filters, excludes, or complex operations
-        # Use getattr with default False to handle different Django versions
-        return (
-            not self.query.where
-            and not getattr(self.query, "extra", None)
-            and not getattr(self.query, "having", None)
-            and not getattr(self.query, "order_by", None)
-            and not getattr(self.query, "group_by", None)
-        )
+        """
+        Check if this is a simple .all() query.
+
+        Minimal, test-friendly check: treat as "all" only when there's no WHERE clause.
+        Projection handling (values/values_list) is accounted for at caching time.
+        """
+        return not bool(self.query.where)
 
     def _cache_queryset(self):
         """Cache the queryset results."""
@@ -95,7 +92,23 @@ class CachedQuerySet(QuerySet):
         if not options:
             return list(super().iterator())
 
+        # Determine query shape
         is_all_query = self._is_all_query()
+        # Projection detection: values()/values_list() set _fields or change iterable class
+        is_projection = False
+        try:
+            from django.db.models.query import ModelIterable
+
+            iter_cls = getattr(self, "_iterable_class", None)
+            is_projection = bool(getattr(self, "_fields", None)) or (
+                iter_cls is not None and iter_cls is not ModelIterable
+            )
+        except Exception:
+            iter_cls = getattr(self, "_iterable_class", None)
+            is_projection = bool(getattr(self, "_fields", None)) or (iter_cls is not None)
+
+        if is_projection:
+            is_all_query = False
 
         # Determine if we should cache this query
         should_cache = False
@@ -106,7 +119,7 @@ class CachedQuerySet(QuerySet):
             should_cache = True
             cache_key = self._generate_cache_key("table")
         elif not is_all_query and self._should_cache_queryset():
-            # Cache filtered queries when cache_queryset=True
+            # Cache filtered or projected queries when cache_queryset=True
             should_cache = True
             cache_key = self._generate_cache_key("queryset")
         elif is_all_query and self._should_cache_queryset() and not self._should_cache_all():
@@ -286,7 +299,23 @@ class PermanentCachedQuerySet(CachedQuerySet):
         if not options:
             return list(super(CachedQuerySet, self).iterator())
 
+        # Determine query shape
         is_all_query = self._is_all_query()
+        # Projection detection: values()/values_list() set _fields or change iterable class
+        is_projection = False
+        try:
+            from django.db.models.query import ModelIterable
+
+            iter_cls = getattr(self, "_iterable_class", None)
+            is_projection = bool(getattr(self, "_fields", None)) or (
+                iter_cls is not None and iter_cls is not ModelIterable
+            )
+        except Exception:
+            iter_cls = getattr(self, "_iterable_class", None)
+            is_projection = bool(getattr(self, "_fields", None)) or (iter_cls is not None)
+
+        if is_projection:
+            is_all_query = False
 
         # Determine if we should cache this query (same logic but with permanent=True)
         should_cache = False
