@@ -35,6 +35,25 @@ class CachedQuerySet(QuerySet):
         """Check if this queryset uses permanent caching."""
         return self._is_permanent_cache
 
+    def _projection_signature(self) -> str:
+        """
+        Return a stable string describing the projection/iterable shape.
+
+        This differentiates values() vs values_list() vs model iteration using
+        the iterable class name and selected fields (when present).
+        """
+        try:
+            iter_cls = getattr(self, "_iterable_class", None)
+            iter_name = iter_cls.__name__ if iter_cls is not None else "ModelIterable"
+        except Exception:
+            iter_name = "UnknownIterable"
+        fields = getattr(self, "_fields", None)
+        try:
+            fields_part = ",".join(map(str, fields)) if fields else ""
+        except Exception:
+            fields_part = str(fields)
+        return f"iter={iter_name}|fields=[{fields_part}]"
+
     def _generate_cache_key(self, query_type="queryset"):
         """Generate cache key based on query."""
         model_name = f"{self.model._meta.app_label}.{self.model._meta.model_name}"
@@ -44,7 +63,7 @@ class CachedQuerySet(QuerySet):
             cache_type = "permanent" if self.is_permanent_cache else "table"
             return f"cache_me:{cache_type}:{model_name}"
 
-        # For complex querysets - hash the SQL query
+        # For complex querysets - hash the SQL query + projection signature
         try:
             query_str = str(self.query)
         except Exception:
@@ -52,7 +71,9 @@ class CachedQuerySet(QuerySet):
             # Use a fallback cache key based on the query object's attributes
             query_str = f"query_id_{id(self.query)}"
 
-        query_hash = hashlib.md5(query_str.encode("utf-8")).hexdigest()
+        sig = self._projection_signature()
+        key_material = f"{query_str}|{sig}"
+        query_hash = hashlib.md5(key_material.encode("utf-8")).hexdigest()
         cache_type = "permanent" if self.is_permanent_cache else "queryset"
         return f"cache_me:{cache_type}:{model_name}:{query_hash}"
 
