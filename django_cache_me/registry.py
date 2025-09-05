@@ -295,6 +295,18 @@ class CachedQuerySet(QuerySet):
         else:
             invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
 
+    def values(self, *fields, **expressions):
+        """Override values to ensure _fields is set in the correct order for cache key generation."""
+        qs = super().values(*fields, **expressions)
+        qs._fields = fields or tuple(expressions.keys())
+        return qs
+
+    def values_list(self, *fields, flat=False, named=False):
+        """Override values_list to ensure _fields is set in the correct order for cache key generation."""
+        qs = super().values_list(*fields, flat=flat, named=named)
+        qs._fields = fields
+        return qs
+
 
 class PermanentCachedQuerySet(CachedQuerySet):
     """
