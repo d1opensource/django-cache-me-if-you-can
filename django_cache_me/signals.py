@@ -97,7 +97,7 @@ def _run_warmers_for_model(model_class):
             cache_generic_message(f"Warmer '{path}' failed: {e}")
 
 
-def schedule_invalidation(model_class, invalidate_permanent=False, warm=None):
+def schedule_invalidation(model_class, invalidate_permanent=False, warm=None, run_sync=None):
     """
     Schedule (or execute) cache invalidation for a model.
 
@@ -108,6 +108,10 @@ def schedule_invalidation(model_class, invalidate_permanent=False, warm=None):
         model_class: The model class to invalidate.
         invalidate_permanent: If True, also invalidates permanent cache.
         warm: Optional boolean. If None, uses DJANGO_CACHE_ME_WARM_ON_INVALIDATE.
+        run_sync: Optional boolean override for sync/async behaviour.
+                  If None, defers to DJANGO_CACHE_ME_ASYNC_ENABLED setting.
+                  If True, forces synchronous invalidation regardless of the setting.
+                  If False, forces asynchronous (Celery) invalidation regardless of the setting.
 
     """
     if not is_cache_enabled():
@@ -117,7 +121,8 @@ def schedule_invalidation(model_class, invalidate_permanent=False, warm=None):
     if warm is None:
         warm = bool(get_setting("DJANGO_CACHE_ME_WARM_ON_INVALIDATE", False))
 
-    async_enabled = bool(get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False))
+    async_enabled = bool(get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False)) if run_sync is None else not run_sync
+
     on_commit = bool(get_setting("DJANGO_CACHE_ME_ASYNC_ON_COMMIT", True))
 
     def _sync_path():

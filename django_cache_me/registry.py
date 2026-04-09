@@ -12,10 +12,9 @@ from .settings import (
     cache_miss_log,
     cache_retrieval_log,
     empty_queryset_log,
-    get_setting,
     is_cache_enabled,
 )
-from .signals import invalidate_model_cache, schedule_invalidation
+from .signals import schedule_invalidation
 
 
 class CachedQuerySet(QuerySet):
@@ -276,24 +275,22 @@ class CachedQuerySet(QuerySet):
 
     def _invalidate_cache(self):
         """Helper method to invalidate cache for this model."""
-        if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
-            schedule_invalidation(self.model)
-        else:
-            invalidate_model_cache(self.model)
+        schedule_invalidation(self.model)
 
-    def invalidate_cache(self, invalidate_all=False):
+    def invalidate_cache(self, invalidate_all=False, run_sync=None):
         """
         Invalidate cache for this model.
 
         Args:
             invalidate_all (bool): If True, also invalidates permanent cache.
                                  If False, only invalidates regular cache.
+            run_sync (bool | None): Override for sync/async behaviour.
+                                   None  - use DJANGO_CACHE_ME_ASYNC_ENABLED setting (default).
+                                   True  - force synchronous invalidation.
+                                   False - force asynchronous (Celery) invalidation.
 
         """
-        if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
-            schedule_invalidation(self.model, invalidate_permanent=invalidate_all)
-        else:
-            invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
+        schedule_invalidation(self.model, invalidate_permanent=invalidate_all, run_sync=run_sync)
 
     def values(self, *fields, **expressions):
         """Override values to ensure _fields is set in the correct order for cache key generation."""
@@ -548,19 +545,20 @@ class CachedManager(models.Manager):
         """Return a manager that uses permanent caching."""
         return PermanentCachedQuerySet(self.model, using=self._db)
 
-    def invalidate_cache(self, invalidate_all=False):
+    def invalidate_cache(self, invalidate_all=False, run_sync=None):
         """
         Invalidate cache for this model.
 
         Args:
             invalidate_all (bool): If True, also invalidates permanent cache.
                                  If False, only invalidates regular cache.
+            run_sync (bool | None): Override for sync/async behaviour.
+                                   None  - use DJANGO_CACHE_ME_ASYNC_ENABLED setting (default).
+                                   True  - force synchronous invalidation.
+                                   False - force asynchronous (Celery) invalidation.
 
         """
-        if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
-            schedule_invalidation(self.model, invalidate_permanent=invalidate_all)
-        else:
-            invalidate_model_cache(self.model, invalidate_permanent=invalidate_all)
+        schedule_invalidation(self.model, invalidate_permanent=invalidate_all, run_sync=run_sync)
 
     def bulk_create(
         self,
@@ -599,10 +597,7 @@ class CachedManager(models.Manager):
 
     def _invalidate_cache(self):
         """Helper method to invalidate cache for this model."""
-        if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
-            schedule_invalidation(self.model)
-        else:
-            invalidate_model_cache(self.model)
+        schedule_invalidation(self.model)
 
 
 class CacheMeOptions:  # noqa: B903
@@ -750,23 +745,17 @@ class CacheMeRegistry:
             """Save method wrapped with cache invalidation."""
             result = original_save(self, *args, **kwargs)
             # Invalidate cache after successful save
-            if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
-                schedule_invalidation(self.__class__)
-            else:
-                invalidate_model_cache(self.__class__)
+            schedule_invalidation(self.__class__)
             return result
 
         def delete_with_invalidation(self, *args, **kwargs):
             """Delete method wrapped with cache invalidation."""
             result = original_delete(self, *args, **kwargs)
             # Invalidate cache after successful delete
-            if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
-                schedule_invalidation(self.__class__)
-            else:
-                invalidate_model_cache(self.__class__)
+            schedule_invalidation(self.__class__)
             return result
 
-        def invalidate_cache_classmethod(cls, invalidate_all=False):
+        def invalidate_cache_classmethod(cls, invalidate_all=False, run_sync=None):
             """
             Class method to manually invalidate cache for this model.
 
@@ -774,12 +763,13 @@ class CacheMeRegistry:
                 cls: The model class to invalidate cache for.
                 invalidate_all (bool): If True, also invalidates permanent cache.
                                      If False, only invalidates regular cache.
+                run_sync (bool | None): Override for sync/async behaviour.
+                                       None  - use DJANGO_CACHE_ME_ASYNC_ENABLED setting (default).
+                                       True  - force synchronous invalidation.
+                                       False - force asynchronous (Celery) invalidation.
 
             """
-            if get_setting("DJANGO_CACHE_ME_ASYNC_ENABLED", False):
-                schedule_invalidation(cls, invalidate_permanent=invalidate_all)
-            else:
-                invalidate_model_cache(cls, invalidate_permanent=invalidate_all)
+            schedule_invalidation(cls, invalidate_permanent=invalidate_all, run_sync=run_sync)
 
         # Replace the methods with wrapped versions
         model_class.save = save_with_invalidation

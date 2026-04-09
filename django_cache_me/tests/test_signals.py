@@ -263,6 +263,39 @@ class TestCacheInvalidationSignals(TestCase):
             # Should attempt to schedule for the single registered model
             mock_sched.assert_called_once_with(TestModel, invalidate_permanent=False)
 
+    @override_settings(DJANGO_CACHE_ME_ASYNC_ENABLED=True, DJANGO_CACHE_ME_ASYNC_ON_COMMIT=False)
+    def test_schedule_invalidation_run_sync_true_forces_sync(self):
+        """run_sync=True should force synchronous invalidation even when ASYNC_ENABLED=True."""
+        with (
+            patch("django_cache_me.signals.invalidate_model_cache") as mock_inv,
+            patch("django_cache_me.tasks.invalidate_model_cache_task.delay") as mock_delay,
+        ):
+            schedule_invalidation(TestModel, invalidate_permanent=True, warm=False, run_sync=True)
+            mock_inv.assert_called_once_with(TestModel, invalidate_permanent=True)
+            mock_delay.assert_not_called()
+
+    @override_settings(DJANGO_CACHE_ME_ASYNC_ENABLED=False, DJANGO_CACHE_ME_ASYNC_ON_COMMIT=False)
+    def test_schedule_invalidation_run_sync_false_forces_async(self):
+        """run_sync=False should force async (Celery) invalidation even when ASYNC_ENABLED=False."""
+        with (
+            patch("django_cache_me.signals.invalidate_model_cache") as mock_inv,
+            patch("django_cache_me.tasks.invalidate_model_cache_task.delay") as mock_delay,
+        ):
+            schedule_invalidation(TestModel, invalidate_permanent=False, warm=False, run_sync=False)
+            mock_delay.assert_called_once()
+            mock_inv.assert_not_called()
+
+    @override_settings(DJANGO_CACHE_ME_ASYNC_ENABLED=False, DJANGO_CACHE_ME_ASYNC_ON_COMMIT=False)
+    def test_schedule_invalidation_run_sync_none_uses_setting(self):
+        """run_sync=None (default) should respect DJANGO_CACHE_ME_ASYNC_ENABLED setting."""
+        with (
+            patch("django_cache_me.signals.invalidate_model_cache") as mock_inv,
+            patch("django_cache_me.tasks.invalidate_model_cache_task.delay") as mock_delay,
+        ):
+            schedule_invalidation(TestModel, invalidate_permanent=True, warm=False, run_sync=None)
+            mock_inv.assert_called_once_with(TestModel, invalidate_permanent=True)
+            mock_delay.assert_not_called()
+
 
 class TestCacheInvalidationSignalsTransactional(TransactionTestCase):
     """Transactional tests for commit hooks."""

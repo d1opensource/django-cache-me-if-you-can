@@ -118,8 +118,8 @@ class TestCachedQuerySet(TestCase):
             mock_cache.assert_called_once()
             self.assertEqual(result, test_data)
 
-    @patch("django_cache_me.registry.invalidate_model_cache")
-    def test_update_method(self, mock_invalidate):
+    @patch("django_cache_me.registry.schedule_invalidation")
+    def test_update_method(self, mock_schedule):
         """Test update method invalidates cache."""
         queryset = CachedQuerySet(TestModel)
 
@@ -133,10 +133,10 @@ class TestCachedQuerySet(TestCase):
             # Verify result is returned
             self.assertEqual(result, 3)
             # Verify cache invalidation was called
-            mock_invalidate.assert_called_once_with(TestModel)
+            mock_schedule.assert_called_once_with(TestModel)
 
-    @patch("django_cache_me.registry.invalidate_model_cache")
-    def test_delete_method(self, mock_invalidate):
+    @patch("django_cache_me.registry.schedule_invalidation")
+    def test_delete_method(self, mock_schedule):
         """Test delete method invalidates cache."""
         queryset = CachedQuerySet(TestModel)
 
@@ -150,7 +150,7 @@ class TestCachedQuerySet(TestCase):
             # Verify result is returned
             self.assertEqual(result, (5, {"TestModel": 5}))
             # Verify cache invalidation was called
-            mock_invalidate.assert_called_once_with(TestModel)
+            mock_schedule.assert_called_once_with(TestModel)
 
     def test_update_preserves_cache_settings(self):
         """Test update method preserves cache settings after operation."""
@@ -160,7 +160,7 @@ class TestCachedQuerySet(TestCase):
 
         with (
             patch.object(models.query.QuerySet, "update", return_value=1),
-            patch("django_cache_me.registry.invalidate_model_cache"),
+            patch("django_cache_me.registry.schedule_invalidation"),
         ):
             queryset.update(name="test")
 
@@ -176,7 +176,7 @@ class TestCachedQuerySet(TestCase):
 
         with (
             patch.object(models.query.QuerySet, "delete", return_value=(1, {"TestModel": 1})),
-            patch("django_cache_me.registry.invalidate_model_cache"),
+            patch("django_cache_me.registry.schedule_invalidation"),
         ):
             queryset.delete()
 
@@ -201,10 +201,10 @@ class TestCachedQuerySet(TestCase):
         """Test the _invalidate_cache helper method."""
         queryset = CachedQuerySet(TestModel)
 
-        with patch("django_cache_me.registry.invalidate_model_cache") as mock_invalidate:
+        with patch("django_cache_me.registry.schedule_invalidation") as mock_schedule:
             queryset._invalidate_cache()
 
-            mock_invalidate.assert_called_once_with(TestModel)
+            mock_schedule.assert_called_once_with(TestModel)
 
     def test_cache_queryset_with_disabled_caching(self):
         """Test _cache_queryset when caching is globally disabled."""
@@ -396,10 +396,10 @@ class TestCachedQuerySet(TestCase):
         """Test invalidate_cache method."""
         queryset = CachedQuerySet(TestModel)
 
-        with patch("django_cache_me.registry.invalidate_model_cache") as mock_invalidate:
+        with patch("django_cache_me.registry.schedule_invalidation") as mock_schedule:
             queryset.invalidate_cache(invalidate_all=True)
 
-            mock_invalidate.assert_called_once_with(TestModel, invalidate_permanent=True)
+            mock_schedule.assert_called_once_with(TestModel, invalidate_permanent=True, run_sync=None)
 
     def test_dunder_methods_use_caching(self):
         """Test that __iter__, __len__, and __getitem__ use caching."""
@@ -453,8 +453,8 @@ class TestCachedManager(TestCase):
         self.assertIsInstance(perm_cache_qs, CachedQuerySet)
         self.assertTrue(perm_cache_qs._is_permanent_cache)
 
-    @patch("django_cache_me.registry.invalidate_model_cache")
-    def test_bulk_create_invalidates_cache(self, mock_invalidate):
+    @patch("django_cache_me.registry.schedule_invalidation")
+    def test_bulk_create_invalidates_cache(self, mock_schedule):
         """Test bulk_create method invalidates cache."""
         manager = CachedManager()
         manager.model = TestModel
@@ -483,10 +483,10 @@ class TestCachedManager(TestCase):
             # Verify result is returned
             self.assertEqual(result, test_objects)
             # Verify cache invalidation was called
-            mock_invalidate.assert_called_once_with(TestModel)
+            mock_schedule.assert_called_once_with(TestModel)
 
-    @patch("django_cache_me.registry.invalidate_model_cache")
-    def test_bulk_update_invalidates_cache(self, mock_invalidate):
+    @patch("django_cache_me.registry.schedule_invalidation")
+    def test_bulk_update_invalidates_cache(self, mock_schedule):
         """Test bulk_update method invalidates cache."""
         manager = CachedManager()
         manager.model = TestModel
@@ -502,30 +502,30 @@ class TestCachedManager(TestCase):
             # Verify result is returned
             self.assertEqual(result, 2)
             # Verify cache invalidation was called
-            mock_invalidate.assert_called_once_with(TestModel)
+            mock_schedule.assert_called_once_with(TestModel)
 
-    @patch("django_cache_me.registry.invalidate_model_cache")
-    def test_invalidate_cache_method(self, mock_invalidate):
+    @patch("django_cache_me.registry.schedule_invalidation")
+    def test_invalidate_cache_method(self, mock_schedule):
         """Test manager's invalidate_cache method."""
         manager = CachedManager()
         manager.model = TestModel
 
         # Test with invalidate_all=False
         manager.invalidate_cache(invalidate_all=False)
-        mock_invalidate.assert_called_with(TestModel, invalidate_permanent=False)
+        mock_schedule.assert_called_with(TestModel, invalidate_permanent=False, run_sync=None)
 
         # Test with invalidate_all=True
         manager.invalidate_cache(invalidate_all=True)
-        mock_invalidate.assert_called_with(TestModel, invalidate_permanent=True)
+        mock_schedule.assert_called_with(TestModel, invalidate_permanent=True, run_sync=None)
 
     def test_manager_invalidate_cache_helper(self):
         """Test the _invalidate_cache helper method."""
         manager = CachedManager()
         manager.model = TestModel
 
-        with patch("django_cache_me.registry.invalidate_model_cache") as mock_invalidate:
+        with patch("django_cache_me.registry.schedule_invalidation") as mock_schedule:
             manager._invalidate_cache()
-            mock_invalidate.assert_called_once_with(TestModel)
+            mock_schedule.assert_called_once_with(TestModel)
 
 
 class TestCacheMeRegistry(TestCase):

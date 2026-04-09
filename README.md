@@ -213,6 +213,12 @@ Product.objects.invalidate_cache(invalidate_all=True)
 
 # From a queryset
 Product.objects.filter(is_active=True).invalidate_cache()
+
+# Force synchronous invalidation (ignores DJANGO_CACHE_ME_ASYNC_ENABLED)
+Product.objects.invalidate_cache(run_sync=True)
+
+# Force asynchronous (Celery) invalidation (ignores DJANGO_CACHE_ME_ASYNC_ENABLED)
+Product.objects.invalidate_cache(run_sync=False)
 ```
 
 ## Async Invalidation (optional)
