@@ -40,7 +40,7 @@ def invalidate_model_cache(model_class, invalidate_permanent=False):
 
     # Always invalidate regular cache
     # Invalidate table cache (for cache_table=True)
-    table_cache_key = f"*cache_me:table:{model_name}"
+    table_cache_key = f"cache_me:table:{model_name}"
     current_cache.delete(table_cache_key)
     cache_invalidation_log(table_cache_key)
 
@@ -50,7 +50,7 @@ def invalidate_model_cache(model_class, invalidate_permanent=False):
 
     # Invalidate permanent cache if requested
     if invalidate_permanent:
-        permanent_table_cache_key = f"*cache_me:permanent:{model_name}"
+        permanent_table_cache_key = f"cache_me:permanent:{model_name}"
         current_cache.delete(permanent_table_cache_key)
         cache_invalidation_log(permanent_table_cache_key)
 

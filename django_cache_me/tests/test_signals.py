@@ -58,6 +58,35 @@ class TestCacheInvalidationSignals(TestCase):
         # This test verifies the function runs without error
         self.assertTrue(True)
 
+    def _register_table_cached_model(self):
+        class TestOptions(CacheMeOptions):
+            def __init__(self, model_class):
+                super().__init__(model_class)
+                self.cache_table = True
+
+        if TestModel in cache_me_registry._registry:
+            del cache_me_registry._registry[TestModel]
+        cache_me_registry.register(TestModel, TestOptions)
+
+    def test_invalidate_model_cache_deletes_the_table_key(self):
+        """The cached .all() result is removed, so the next read sees the saved rows."""
+        self._register_table_cached_model()
+        cache.set("cache_me:table:django_cache_me.testmodel", ["stale"])
+
+        invalidate_model_cache(TestModel)
+
+        self.assertIsNone(cache.get("cache_me:table:django_cache_me.testmodel"))
+
+    def test_invalidate_model_cache_keeps_the_permanent_key_unless_asked(self):
+        self._register_table_cached_model()
+        cache.set("cache_me:permanent:django_cache_me.testmodel", ["kept"])
+
+        invalidate_model_cache(TestModel)
+        self.assertEqual(cache.get("cache_me:permanent:django_cache_me.testmodel"), ["kept"])
+
+        invalidate_model_cache(TestModel, invalidate_permanent=True)
+        self.assertIsNone(cache.get("cache_me:permanent:django_cache_me.testmodel"))
+
     def test_invalidate_model_cache_unregistered_model(self):
         """Test cache invalidation for unregistered model."""
         # Ensure model is not registered
